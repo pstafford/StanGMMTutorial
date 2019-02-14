@@ -3,8 +3,8 @@ title: "GMPE Estimation Using Stan - Tutorial"
 author: "Nicolas Kuehn and Peter Stafford"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
-  pdf_document: default
   html_document: default
+  pdf_document: default
 bibliography: references.bib
 ---
 
@@ -15,18 +15,21 @@ knitr::opts_chunk$set(echo = TRUE, fig.width=12,fig.height = 8, fig.path = 'pict
 
 ## Introduction
 
-This is a tutorial how to use the program Stan (<https://mc-stan.org/>) to estimate the parameters of a ground-motion prediction equation (GMPE).
-Stan is a program that uses Bayesian inference to estimate the parameters via Markov Chain Monte Carlo (MCMC) sampling.
+This is a tutorial on how to use the program Stan (<https://mc-stan.org/>) to estimate the parameters of a ground-motion prediction equation (GMPE).
+Stan is a program that uses Bayesian inference to estimate the parameters of a model via Markov Chain Monte Carlo (MCMC) sampling.
 
-We will use a simple example of fitting a simple GMPE to some data.
+We will use an example of fitting a simple GMPE to some data.
 The data come from the NGA West 2 data set.
 We use a small subset 
 We will fit a GMPE of the form
-$$y = \theta_1 + \theta_2 M + \theta_3 M^2 + (\theta_4 + \theta_5 M) \ln \left[ R_{RUP} + h \right] + \theta_6 R_{RUP} + \theta_7 \ln \frac{V_{}S30}{760}$$
+$$y = \theta_1 + \theta_2 M + \theta_3 M^2 + (\theta_4 + \theta_5 M) \ln \left[ R_{RUP} + h \right] + \theta_6 R_{RUP} + \theta_7 \ln \frac{V_{S30}}{760}$$
 to show how one can estimate the parameters using Stan, and compare other packages such as **lme4** [@Bates2015].
-The goal is not to fit a "good" GMPE that can be used in probabilistic seismic hazard analysis, but to show te principles of Stan, so that users can adjust the code to their needs.
-We will gradually make the model more complex, and show the felxibility of Stan in fitting complex models, such as partially non-ergodic models, or spatial correlation models.
+The goal is not to fit a "good" GMPE that can be used in probabilistic seismic hazard analysis, but to show the principles of Stan, so that users can adjust the code to their needs.
+We will gradually make the model more complex, and show the flexibility of Stan in fitting complex models, such as partially non-ergodic models, or spatial correlation models.
 Only a basic familiarity with **R** is assumed.
+However, it should be noted that **R** is used here as an interface to the underlying program **cmdstan**, and other interfaces exist.
+Stan itself can be run through `cmdstan` as a command-line program, but can also be used through interfaces with other common dynamic programming languages such as **Julia**, **Python**, and **MATLAB**, among others (for details about these alternative interfaces, see <https://mc-stan.org/>).
+
 
 ## Getting Started
 
@@ -53,8 +56,13 @@ dim(data)
 
 The data set consists of 2000 records with 274 fiels, which contain the meta data such as magnitudes, distances and so on.
 
-First, we fit a linear model using `lmer` to the data.
-To make our GMM linear, we have to fix he parameter `h` (often referred to as pseudo-depth of near-faul-saturation-term).
+First, we fit a linear model using `lmer`, from the **R** package **lme4**, to the data.
+The package **lme4** is the successor to the package **nlme** and together these packages have been used quite extensively for the purposes of calibrating ground-motion models in the past.
+These packages use more traditional maximum-likelihood based techniques with efficient numerical strategies to fit models. 
+They are computationally very efficient, but also have limitations with regard to what type of models can be fit. 
+As will be seen as we progress through this tutorial, **Stan** offers far greater flexibility and enables a broader range of models to be fit that accommodate the current needs of ground-motion model developers and researchers.
+
+To make our GMM linear, we have to fix the parameter `h` (often referred to as pseudo-depth of near-fault-saturation-term).
 In this example, we fix it to `h = 6`.
 
 
@@ -80,7 +88,8 @@ fit_lmer = lmer(Y ~ 1 + M_sq + lnR + M * lnR + lnVS
 ```
 
 This code fits a linear mixed effects model with one random effect for earthquakes (commonly called event terms).
-We can look at the output with
+This type of model has been referred to as a 'random effects' model within the engineering seismology community [@Abrahamson1992].
+We can look at the output with:
 
 ```{r output_lme4}
 summary(fit_lmer)
@@ -89,32 +98,32 @@ summary(fit_lmer)
 ### Stan
 
 Now we describe how to fit the same model using Stan.
-A Stan program is made up of blocks, like a `data {}`, `parameters {}` and `model {}` block.
-These are used to declare the data, the parameters to be estimated, and a genarative model for the data.
-A decralration of a variable will look like `real a;` to declare a variable `a` that is a real, or `vector[N] Y;` to declare a vector of length `N`.
+A Stan program is made up of blocks, like a `data {}`, `parameters {}` and a `model {}` block.
+These are used to declare the data, the parameters to be estimated, and a generative model for the data.
+A declaration of a variable will look like `real a;` to declare a variable `a` that is a real, or `vector[N] Y;` to declare a vector of length `N`.
 Stan is typed, so there is a difference between a declaration `real a;` or `int a;`.
-Constraints can be declared as `real<lower=L,upper=U> a;`, which means that `a` can take only values `L <= a <l U`.
-Each line in  stan program has to end in `;`.
+Constraints can be declared as `real<lower=L,upper=U> a;`, which means that `a` can take only values `L <= a <= U`.
+Each line in a stan program has to end in `;`.
 
 In the Stan program below, we first declare the number of records `N` and the number of events `NEQ` as integer values.
-We hen declare the target and predictor variables as vectors of length `N`.
+We then declare the target and predictor variables as vectors of length `N`.
 Alternatively, they could also be declared as an array, via `real M[N]`.
-We also declare an integer array `int idx_eq[N]` which stores the even indices as numbers between `1` and `NEQ`.
+We also declare an integer array `int idx_eq[N]` which stores the event indices as numbers between `1` and `NEQ`.
 
-Next we have a `transformed parameters {}` block.
+Next we have a `transformed data {}` block.
 This block is optional, and can be used to define global variables that are used throughout the program.
 
-In the `parameters {}` block the coefficients `theta`, the sandard deviations `phi` and `tau` and the event terms `delta B` are declared.
+In the `parameters {}` block the coefficients `theta`, the standard deviations `phi` and `tau` and the event terms `deltaB` are declared.
 Since standard deviations need to be positive, they are declared as `real<lower=0> tau` and `real<lower=0> phi`.
 
-The `model {}` block contains the generative model, which is the same as the functional form for our GMPE.
-There is a loop over all records, and inside the loop we caclulate the median prediction for each record (including even term).
-The data is assumed to be normally distributed with mean equal to the median prediction and standard deviation `phi`.
-The loop shows the declaration of a local variable mu, which is local to the `for` loop.
-Since Stan estimates parameters via Bayesian inference, we need to specify prior distributions for the parameters, whcih are the `theta1 ~ normal(0,10)` statements - in this case, the prior distribution for `theta1` is a normal distribution with mean zero and standard deviation 10.
-If no prior distributions are specified, Stan will assume an immproper uniform prior over the values for which the parameter is declared.
-Specification of prior distributions is an important and often discussed topic - we recommend checking out the prior recommendation wiki for some guidelines (<https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations>).
-The standard deviations are given half-cauchy distributions (since they are constrained to be posiive), which is the default recommendation in Stan.
+The `model {}` block contains the generative model, which includes the functional form for our GMPE, but also defines the prior distributions for the parameters to be estimated.
+There is a loop over all records, and inside the loop we caclulate the median prediction for each record (including the event term).
+The data is assumed to be normally-distributed with mean equal to the event term corrected median prediction and standard deviation `phi`.
+The loop shows the declaration of a local variable `mu`, which is local to the `for` loop.
+Since Stan estimates parameters via Bayesian inference, we need to specify prior distributions for the parameters, which are the `theta1 ~ normal(0,10)` statements - in this case, the prior distribution for `theta1` is a normal distribution with mean zero and standard deviation 10.
+If no prior distributions are specified, Stan will assume an improper uniform prior over the values for which the parameter is declared.
+Specification of prior distributions is an important and often-discussed topic - we recommend checking out the prior recommendation wiki for some guidelines (<https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations>).
+The standard deviations are given half-cauchy distributions (since they are constrained to be positive), which is the default recommendation in Stan.
 In our experience, these work well for $phi$, $tau$ and $phi_{SS}$ and $phi_{S2S}$, but might have too heavy tails for some partially nonergodic parameters.
 
 
@@ -173,8 +182,11 @@ model {
 }
 ```
 
-A more efficient version is below.
+A more efficient version of the above Stan code is provided below.
 This version is vectorized and uses matrix algebra, which makes it run faster.
+Note that this efficiency is not related to the use of vectorization _per se_, as the Stan program is compiled to **C++** before being called from Stan.
+The increase in efficiency is more related to how the derivatives of the likelihood function are generated.
+The NUTS sampler used by Stan requires derivatives of the likelihood function to be computed and efficiency gains in Stan are usually related to how to optimally represent the derivative tree required as part of this process.
 
 ```{stan, output.var="gmm_model1_vectorized"}
 data {
@@ -227,7 +239,7 @@ model {
 }
 ```
 
-There are two ways to run he code. One is to put the Stan code into a variable 
+There are two ways to run the code. One is to put the Stan code into a variable within **R**:
 `
 model1 <- '
 data {...}
@@ -251,9 +263,9 @@ full_d <- list(
   Y =log(data$PGA..g.)
 );
 
-niter = 400;
-wp = 200;
-nchains = 4;
+niter = 400;  # total number of MCMC iterations (warmup + actual sampling)
+wp = 200;     # number of warm-up iterations (performed prior to actual sampling)
+nchains = 4;  # number of MCMC chains, run in parallel, each from a different random seed
 
 fit_model1 <- stan('STAN/gmm_model1_vectorized.stan', data = full_d, 
                        iter = niter, chains = nchains, warmup = wp, verbose = FALSE)
@@ -276,7 +288,7 @@ print(get_elapsed_time(fit_model1))
 
 We can look at a summary using the `print` function, and look at trace plots of some parameters via `traceplot`.
 The option `pars = ` determines which parameters we want to look at (there are `r max(eq_idx)` event terms $\delta B$, so we only look at the fixed effects and standard deviations).
-The output of `print` shows the mean, standard deviation and and some quantiles, derived from the posterior distribution (the posterior samples), as well as summary statistics like Rhat, which give an indication whether the chains have converged.
+The output of `print` shows the mean, standard deviation and and some quantiles, derived from the posterior distribution (the posterior samples), as well as summary statistics like `Rhat`, which gives an indication of whether the chains have converged.
 An alternative to `print` is the `summary` function, which gives summaries for the individual chains, as well as the combined posterior draws.
 The trace plots show the mixing of the different chains.
 
@@ -303,7 +315,7 @@ plot(M_eq,deltaB_mean)
 hist(posterior$theta[,2])
 ```
 
-For a full list of methods to look at output from a Stan model, see `help("stanfit")`.
+For a full list of the methods that are available to look at output from a Stan model, see `help("stanfit")`.
 
 # Bayesplot
 
@@ -311,7 +323,7 @@ The **bayesplot** package has implemented some functions for diagnosing and asse
 
 # BRMS
 
-The package **brms** [Burkner2017] is a wrapper for Stan that allows one to use a syntax similar to `lmer`.
+The package **brms** [@Burkner2017] is a wrapper for Stan that allows one to use a syntax similar to `lmer`.
 It is very flexible in the models that it can fit.
 
 ``` {r fit_brm}
@@ -319,14 +331,14 @@ fit_brm <- brm(Y ~ 1 + M_sq + lnR + M * lnR + lnVS + (1|EQID),data = data_regres
 summary(fit_brm)
 ```
 
-## More complicated Models
+## More Complicated Models
 
-An obvious extension to the simple model is to include a random systematic effect for stations, and to make the near-fault-saturation term $h$ a parameter of the model.
+An obvious extension to the simple model is to include a random systematic effect for stations, and to make the near-fault-saturation term, $h$, a parameter of the model.
 Estimating $h$ makes the model nonlinear, so we cannot use the fully vectorized model anymore.
 The Stan code is below.
-We added the number of statiosn and a staion index to the data, and moved `h` from the transformed data block to the parameters block.
+We added the number of stations and a station index to the data, and moved `h` from the transformed data block to the parameters block.
 Since `h` should be positive, we declare it with `<lower=0>`.
-The median is assigned in a loop because the functional form is nonlinear, but the samplign statement `Y ~ normal(mu,sigma)` is vectorized, which requires that mu is declared as a vector.
+The median is assigned in a loop because the functional form is nonlinear, but the sampling statement `Y ~ normal(mu,sigma)` is vectorized, which requires that `mu` is declared as a vector.
 
 ```{stan, output.var="gmm_model2"}
 data {
@@ -392,7 +404,7 @@ model {
 }
 ```
 
-Often, `h` is modeled as magnitude dependent, such as $h = a \exp(bM)$.
+Often, `h` is modeled as being magnitude dependent, such as $h = a \exp(bM)$.
 This can be easily incorporated.
 
 ```{}
@@ -416,7 +428,7 @@ Since `a` and `b` are typically hard to estimate from data, they should be given
 
 # Correlated Random Effects
 
-Below, we show an example how one could model multiple random effects for the same level.
+Below, we show an example of how one could model multiple random effects for the same level.
 We assume that for each event, there is an event-specific near-fault-saturation term, which is distributed around a mean function $a \exp (b M)$, i.e.
 $$
 h_e = a \exp(b M_e + \delta B_{2,e})
@@ -491,9 +503,9 @@ model {
 }
 ```
 
-Next, we model the two event terms as correlated, i.e. disributed according to a multivariate normal distribution
+Next, we model the two event terms as correlated, _i.e._, distributed according to a multivariate normal distribution
 $$
-\vec{\delta B} \sim N(\vec{0},\Sigma)
+\vec{\delta B} \sim N(\vec{0},\boldsymbol{\Sigma})
 $$
 Thus, we now declare the event terms `deltaB` as an array of length `NEQ` of two-dimensional vectors, corresponding to the constant random effect and the event-specific near-fault-term.
 The prior for the covariance matrix $\Sigma$ is separated into a prior for the standard deviations `tau` and one for the correlation marix `C_eq`, which is based on [@Lewandowski2009].
@@ -660,22 +672,22 @@ model {
 ## Partially Nonergodic Models
 
 Over the last few years it has been recognized that the ergodic assumption [@Anderson1999] (that the ground-motion distribution at a site over time is the same as the ground-motion distribution over space) can lead to biased hazard results.
-With an incrasing amount of data in different regions, the ergodic assumption can be relaxed.
+With an increasing amount of data in different regions, the ergodic assumption can be relaxed.
 An intermediate step towards fully nonergodic models are partially nonergodic models (though one can argue that models that account for systematic station terms $\delta S$ are already partially nonergodic) in which some of the parameters are different for different regions.
-Ofen, the constant, anelastic attenuation coefficient, and the site-scaling coefficient are regionally dependent [@Stafford2014,@Kotha2016,@Sedaghati2017,@Kuehn2016].
+Often, the constant, anelastic attenuation coefficient, and the site-scaling coefficient are regionally dependent [@Stafford2014,@Kotha2016,@Sedaghati2017,@Kuehn2016].
 It makes sense to model these as regional random effects, since in that case the coefficient for regions with a smaller amount of data are automatically associated with larger uncertainty (in the Bayesian case, a wider posterior distribution).
-Typically, one assumes that the regional random effects are distributed according to a normal distribution, where the regional coefficients are samples from a global coefficient (e.g. for the constant $\theta_1$)
+Typically, one assumes that the regional random effects are distributed according to a normal distribution, where the regional coefficients are samples from a global coefficient (_e.g._, for the constant $\theta_1$)
 $$
 \theta_1 \sim \mathcal N(\mu_{\theta 1},\sigma_{\theta 1})
 $$
-where $\mu_{\theta 1}$ is the (global) mean (over the data set) for the constant coefficient and $\sigma_{\theta 1}$ is the standard deviation which determines how much the regional coefficients can differ from the global mean.
+where $\mu_{\theta_1}$ is the (global) mean (over the data set) for the constant coefficient and $\sigma_{\theta_1}$ is the standard deviation which determines how much the regional coefficients can differ from the global mean.
 Below, we have written a Stan model with regional coefficients for the constant, the anelastic attenuation (linear R scaling) and the $V_{S30}$-scaling.
 We add an integer for the number of regions, as well as an integer comprising the region indices for the records to the `data {}` block.
 We then declare the mean coefficients and vectors for the regional coefficients, as well as the standard deviations.
 In this case, the regional parameters are declared as independent, but they can also be modeled as correlated as explained previously.
 We have declared the regional parameters `theta6` (linear R term) with `vector<upper=0>[NREG] theta6`, so they are constrained to be negative.
 This is a physical requirement, but in particular for partially nonergodic models it can happen that a regional coefficient becomes positive if data is sparse - this can also happen for long periods, where the coefficient typically approaches zero.
-The constraint makes sure that this does not happen.
+Imposing the constraint ensures that this does not happen.
 
 
 ```{stan, output.var="gmm_model_partially_nonergodic"}
@@ -867,17 +879,17 @@ model {
 
 
 In the previous two partially nonergodic models, the prior distribution for the regional standard deviations `sigma_theta1`, `sigma_theta6` and `sigma_theta7` was a half-cauchy distribution.
-This is based on a recomendation by [@Gelman2006b].
+This is based on a recommendation by [@Gelman2006b].
 However, the half-cauchy distribution has very heavy tails, which can lead to unrealistically high values of the standard deviation and thus spurious regional deviations from the global mean coefficient (the deviation is $z \sigma_{\theta}$) if the number of regions is small.
 This is also a problem of maximum-likelihood estimation with a small number of groups.
-For event terms and station terms, this is less of a problem since there are many events/stations for each data set, but the number of regions is typically small (<10), which can make it hard o estimate the regional standard deviation.
+For event terms and station terms, this is less of a problem since there are many events/stations for each data set, but the number of regions is typically small (<10), which can make it hard to estimate the regional standard deviation.
 In that case, stronger prior information is needed - for example, an exponential distribution or a normal or Student-t distribution might be better.
 These can be implemented as
 
 ``` {}
   sigma_par1 ~ exponential(1);
   sigma_par1 ~ normal(0,1);
-  sigma_par1 ~ student_t ~ (6,0,1);
+  sigma_par1 ~ student_t(6,0,1);
 ```
 
 What is generally important is that the prior distribution should be scaled based on the effects.
@@ -888,7 +900,7 @@ This is a complicated topic, and general advice that works in every situation is
 Sometimes a data set has outliers, and these outliers can severley affect both the mean and standard deviation ($\phi$) of an estimated model - often, GMPE developers discard some records which are obvious outliers (these might be of low quality due to processing errors).
 One way to mitigate the effect of outlier data points on the model is to use robust regression - in robust regression, one tries to limit the influence of a data point that is far from the regression line.
 For example, one way to do that would be to minimize the absolute residuals and not the squared residuals.
-In a Bayesian model, one way to do ribust regression is to replace the data likelihood (upt to now a normal distribution) with a Student-t distribution with low degrees-of-freedom.
+In a Bayesian model, one way to do robust regression is to replace the data likelihood (which until now has been based upon the assumption that logarithmic ground-motions are normally distributed, when conditioned upon some rupture scenario) with a Student-_t_ distribution with low degrees-of-freedom.
 Such a distribution has heavier tails than the normal distribution and thus is less sensitive to outliers.
 Such a model can be coded in Stan as follows (see also <http://doingbayesiandataanalysis.blogspot.com/2013/06/bayesian-robust-regression-for-anscombe.html> or <https://jrnold.github.io/bayesian_notes/robust-regression.html>)
 
@@ -902,13 +914,13 @@ model {
   nu ~ gamma(2,0.1);
   ...
 
-  Y ~ normal(nu,mu,sigma);
+  Y ~ student_t(nu,mu,sigma);
 }
 ...
 ```
 
 Here, we declare a new parameter `nu` for the degrees-of-freedom, which is given a gamma prior (following [@Juarez2010]).
-The rest of the model is the same, except that the sampling statement for the data is changed from the normal distribution to the Student-t distribution.
+The rest of the model is the same, except that the sampling statement for the data is changed from the normal distribution to the Student-_t_ distribution.
 
 ## Heteroscedastic models
 
@@ -942,7 +954,7 @@ model {
 
 ## Truncated regression
 
-If data comes from e.g. triggered instruments, it is truncated.
+If data comes from _e.g._, triggered instruments, it is truncated.
 If this is not taken into account, the regression estimates will be biased [@Chao2018,@Bragato2004].
 Truncated regression can be performed in Stan using the following adjustment to the sampling statement.
 Truncated sampling statements cannot be vectorized, so it is moved into the loop (which unfortunately is less efficient).
@@ -1058,7 +1070,7 @@ model {
   deltaB ~ normal(0,tau);
   deltaS ~ normal(0,phiS2S);
   
-  VS_missing ~ lognormal(400,0.5); // some prior should be set (if no information, maybe mean/sd of dataset)
+  VS_missing ~ lognormal(log(400),0.5); // some prior should be set (if no information, maybe mean/sd of dataset)
   
   for(i in 1:N) {
     mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS_imputed[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
@@ -1070,6 +1082,11 @@ model {
 ## Measurement error models
 
 See [@Kuehn2018] (need to expand).
+
+## Incorporating Spatial Correlation
+
+Ground-motion observations made at closely-spaced locations will be correlated, yet the models considered thus far do not account for this.
+
 
 ```{r session_info, include=TRUE, echo=TRUE, results='markup'}
 devtools::session_info()
