@@ -1,0 +1,1076 @@
+---
+title: "GMPE Estimation Using Stan - Tutorial"
+author: "Nicolas Kuehn and Peter Stafford"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document: default
+  html_document: default
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width=12,fig.height = 8, fig.path = 'pictures/')
+# setwd('/Users/nico/Dropbox/WORK/STAN_Tutorial/')
+```
+
+## Introduction
+
+This is a tutorial how to use the program Stan (<https://mc-stan.org/>) to estimate the parameters of a ground-motion prediction equation (GMPE).
+Stan is a program that uses Bayesian inference to estimate the parameters via Markov Chain Monte Carlo (MCMC) sampling.
+
+We will use a simple example of fitting a simple GMPE to some data.
+The data come from the NGA West 2 data set.
+We use a small subset 
+We will fit a GMPE of the form
+$$y = \theta_1 + \theta_2 M + \theta_3 M^2 + (\theta_4 + \theta_5 M) \ln \left[ R_{RUP} + h \right] + \theta_6 R_{RUP} + \theta_7 \ln \frac{V_{}S30}{760}$$
+to show how one can estimate the parameters using Stan, and compare other packages such as **lme4** [@Bates2015].
+The goal is not to fit a "good" GMPE that can be used in probabilistic seismic hazard analysis, but to show te principles of Stan, so that users can adjust the code to their needs.
+We will gradually make the model more complex, and show the felxibility of Stan in fitting complex models, such as partially non-ergodic models, or spatial correlation models.
+Only a basic familiarity with **R** is assumed.
+
+## Getting Started
+
+This tutorial uses **Stan** version 2.18.2 and requires the following **R** packages
+```{r load_libraries, warning=FALSE, message=FALSE}
+# load required packages
+library(lme4)
+library(rstan)
+library(brms)
+library(rstanarm)
+library(bayesplot)
+
+options(mc.cores = parallel::detectCores())
+```
+
+First, we read in the data.
+We use a subset of 2000 records from the NGA West 2 data base [@Ancheta2014], from the subset used by the ASK14 model [@Abrahamson2014].
+The use of 2000 records is for computational purposes.
+
+```{r read_data}
+data <- read.csv('DATA/NGA_West2_Flatfile_RotD50_d050_public_version_subsetASK.csv', header=TRUE)
+dim(data)
+```
+
+The data set consists of 2000 records with 274 fiels, which contain the meta data such as magnitudes, distances and so on.
+
+First, we fit a linear model using `lmer` to the data.
+To make our GMM linear, we have to fix he parameter `h` (often referred to as pseudo-depth of near-faul-saturation-term).
+In this example, we fix it to `h = 6`.
+
+
+```{r fit_lme4}
+h <- 6;
+vref = 760;
+M = data$Earthquake.Magnitude;
+M_sq = M^2;
+R = data$ClstD..km.;
+lnR = log(R + h);
+MlnR = M * log(R + h);
+lnVS = log(data$Vs30..m.s..selected.for.analysis/vref);
+
+EQID = data$EQID;
+STATID = data$Station.Sequence.Number;
+
+Y = log(data$PGA..g.);
+
+data_regression =  data.frame(M,M_sq,R,lnR,MlnR,lnVS,Y,EQID);
+
+fit_lmer = lmer(Y ~ 1 + M_sq + lnR + M * lnR + lnVS
+                + (1|EQID),data=data_regression);
+```
+
+This code fits a linear mixed effects model with one random effect for earthquakes (commonly called event terms).
+We can look at the output with
+
+```{r output_lme4}
+summary(fit_lmer)
+```
+
+### Stan
+
+Now we describe how to fit the same model using Stan.
+A Stan program is made up of blocks, like a `data {}`, `parameters {}` and `model {}` block.
+These are used to declare the data, the parameters to be estimated, and a genarative model for the data.
+A decralration of a variable will look like `real a;` to declare a variable `a` that is a real, or `vector[N] Y;` to declare a vector of length `N`.
+Stan is typed, so there is a difference between a declaration `real a;` or `int a;`.
+Constraints can be declared as `real<lower=L,upper=U> a;`, which means that `a` can take only values `L <= a <l U`.
+Each line in  stan program has to end in `;`.
+
+In the Stan program below, we first declare the number of records `N` and the number of events `NEQ` as integer values.
+We hen declare the target and predictor variables as vectors of length `N`.
+Alternatively, they could also be declared as an array, via `real M[N]`.
+We also declare an integer array `int idx_eq[N]` which stores the even indices as numbers between `1` and `NEQ`.
+
+Next we have a `transformed parameters {}` block.
+This block is optional, and can be used to define global variables that are used throughout the program.
+
+In the `parameters {}` block the coefficients `theta`, the sandard deviations `phi` and `tau` and the event terms `delta B` are declared.
+Since standard deviations need to be positive, they are declared as `real<lower=0> tau` and `real<lower=0> phi`.
+
+The `model {}` block contains the generative model, which is the same as the functional form for our GMPE.
+There is a loop over all records, and inside the loop we caclulate the median prediction for each record (including even term).
+The data is assumed to be normally distributed with mean equal to the median prediction and standard deviation `phi`.
+The loop shows the declaration of a local variable mu, which is local to the `for` loop.
+Since Stan estimates parameters via Bayesian inference, we need to specify prior distributions for the parameters, whcih are the `theta1 ~ normal(0,10)` statements - in this case, the prior distribution for `theta1` is a normal distribution with mean zero and standard deviation 10.
+If no prior distributions are specified, Stan will assume an immproper uniform prior over the values for which the parameter is declared.
+Specification of prior distributions is an important and often discussed topic - we recommend checking out the prior recommendation wiki for some guidelines (<https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations>).
+The standard deviations are given half-cauchy distributions (since they are constrained to be posiive), which is the default recommendation in Stan.
+In our experience, these work well for $phi$, $tau$ and $phi_{SS}$ and $phi_{S2S}$, but might have too heavy tails for some partially nonergodic parameters.
+
+
+```{stan, output.var="gmm_model1"}
+data {
+  int<lower=1> N; // number of records
+  int<lower=1> NEQ; // number of earthquakes
+  
+  vector[N] M; // magnitudes
+  vector[N] R; // distances
+  vector[N] VS; // Vs30 values
+  vector[N] Y; // ln PGA values
+  
+  int<lower=1,upper=NEQ> idx_eq[N];
+}
+
+transformed data {
+  real h = 6;
+  real vref = 760;
+}
+
+parameters {
+  real theta1;
+  real theta2;
+  real theta3;
+  real theta4;
+  real theta5;
+  real theta6;
+  real theta7;
+  
+  real<lower=0> phi;
+  real<lower=0> tau;
+  
+  vector[NEQ] deltaB;
+}
+
+model {
+  theta1 ~ normal(0,10);
+  theta2 ~ normal(0,10);
+  theta3 ~ normal(0,10);
+  theta4 ~ normal(0,10);
+  theta5 ~ normal(0,10);
+  theta6 ~ normal(0,10);
+  theta7 ~ normal(0,10);
+  
+  phi ~ cauchy(0,0.5);
+  tau ~ cauchy(0,0.5);
+  
+  deltaB ~ normal(0,tau);
+  
+  for(i in 1:N) {
+    real mu;
+    mu = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]];
+    Y[i] ~ normal(mu,phi);
+  }
+}
+```
+
+A more efficient version is below.
+This version is vectorized and uses matrix algebra, which makes it run faster.
+
+```{stan, output.var="gmm_model1_vectorized"}
+data {
+  int<lower=1> N; // number of records
+  int<lower=1> NEQ; // number of earthquakes
+  
+  vector[N] M; // magnitudes
+  vector[N] R; // distances
+  vector[N] VS; // Vs30 values
+  vector[N] Y; // ln PGA values
+  
+  int<lower=1,upper=NEQ> idx_eq[N];
+}
+
+transformed data {
+  real h = 6;
+  real vref = 760;
+  
+  matrix[N,7] X;
+  
+  for(i in 1:N) {
+    X[i,1] = 1;
+    X[i,2] = M[i];
+    X[i,3] = square(M[i]);
+    X[i,4] = log(R[i] + h);
+    X[i,5] = M[i] * log(R[i] + h);
+    X[i,6] = R[i];
+    X[i,7] = log(VS[i]/vref);
+  }
+}
+
+parameters {
+  vector[7] theta;
+  
+  real<lower=0> phi;
+  real<lower=0> tau;
+  
+  vector[NEQ] deltaB;
+}
+
+model {
+  theta ~ normal(0,10);
+  
+  phi ~ cauchy(0,0.5);
+  tau ~ cauchy(0,0.5);
+  
+  deltaB ~ normal(0,tau);
+  
+  Y ~ normal(X * theta + deltaB[idx_eq],phi);
+}
+```
+
+There are two ways to run he code. One is to put the Stan code into a variable 
+`
+model1 <- '
+data {...}
+parameters {...}
+model {...}'
+`
+and then run the code with `rstan(model1)`. The other one is to save the code in a file with the extension `.stan` and then run it with `rstan('path-to-file/file.stan')`.
+Below, we coded up the vectorized model, which resides in a file called `gmm_model1_vectorized.stan` in subdirectory `STAN`.
+
+``` {r run_stan_gmm_model1}
+eq_idx_factor <- factor(data$EQID)
+eq_idx <- as.numeric(eq_idx_factor)
+
+full_d <- list(
+  N = length(data[,1]),
+  NEQ = max(eq_idx),
+  idx_eq = eq_idx,
+  M = data$Earthquake.Magnitude,
+  R = data$ClstD..km.,
+  VS = data$Vs30..m.s..selected.for.analysis,
+  Y =log(data$PGA..g.)
+);
+
+niter = 400;
+wp = 200;
+nchains = 4;
+
+fit_model1 <- stan('STAN/gmm_model1_vectorized.stan', data = full_d, 
+                       iter = niter, chains = nchains, warmup = wp, verbose = FALSE)
+```
+
+Generally, it is a good idea to check whether the maximum treedepth is exceeded and whether there are divergences to see if there were problems with the fit.
+
+```{r check_fit_model1}
+check_treedepth(fit_model1)
+check_divergences(fit_model1)
+```
+
+One drawback of using Stan is the runtime, which is considerably longer than for `lmer`.
+This is not so much a problem for the small subset of data used here, but can become a problem for a regression with thousands of records for multiple periods, especially if the model is more complex.
+However, once a Bayesian model is regressed and used for Bayesian updating, this becomes less of an issue [@Stafford2018].
+
+``` {r runtime_model1}
+print(get_elapsed_time(fit_model1))
+```
+
+We can look at a summary using the `print` function, and look at trace plots of some parameters via `traceplot`.
+The option `pars = ` determines which parameters we want to look at (there are `r max(eq_idx)` event terms $\delta B$, so we only look at the fixed effects and standard deviations).
+The output of `print` shows the mean, standard deviation and and some quantiles, derived from the posterior distribution (the posterior samples), as well as summary statistics like Rhat, which give an indication whether the chains have converged.
+An alternative to `print` is the `summary` function, which gives summaries for the individual chains, as well as the combined posterior draws.
+The trace plots show the mixing of the different chains.
+
+```{r summary_model1}
+print(fit_model1, pars = c('lp__','theta','phi','tau'))
+traceplot(fit_model1,pars = c('lp__','theta','phi','tau'))
+```
+
+We can also plot uncertainty intervals of the posterior distribution with
+``` {r plot_model1}
+plot(fit_model1,pars = c('phi','tau'))
+```
+
+Comparing the values from Stan and from **lme4**, they are similar.
+The posterior samples can be assessed with `extract(fit_model1, pars = c('deltaB'))`, which returns a list, where every element is an array with the samples for the parameter.
+For example, with the code below we plot the means of the posterior distribution of the event terms against magnitude, as well as a histogram of the posterior samples for the magnitude scaling parameter.
+
+``` {r extract_posterior_model1}
+posterior <- extract(fit_model1)
+deltaB_mean <- colMeans(posterior$deltaB)
+M_eq <- unique(data.frame(eq_idx,data$Earthquake.Magnitude[eq_idx]))[,2]
+par(mfrow = c(1,2))
+plot(M_eq,deltaB_mean)
+hist(posterior$theta[,2])
+```
+
+For a full list of methods to look at output from a Stan model, see `help("stanfit")`.
+
+# Bayesplot
+
+The **bayesplot** package has implemented some functions for diagnosing and assessing posterior distributions of a fit with Stan.
+
+# BRMS
+
+The package **brms** [Burkner2017] is a wrapper for Stan that allows one to use a syntax similar to `lmer`.
+It is very flexible in the models that it can fit.
+
+``` {r fit_brm}
+fit_brm <- brm(Y ~ 1 + M_sq + lnR + M * lnR + lnVS + (1|EQID),data = data_regression)
+summary(fit_brm)
+```
+
+## More complicated Models
+
+An obvious extension to the simple model is to include a random systematic effect for stations, and to make the near-fault-saturation term $h$ a parameter of the model.
+Estimating $h$ makes the model nonlinear, so we cannot use the fully vectorized model anymore.
+The Stan code is below.
+We added the number of statiosn and a staion index to the data, and moved `h` from the transformed data block to the parameters block.
+Since `h` should be positive, we declare it with `<lower=0>`.
+The median is assigned in a loop because the functional form is nonlinear, but the samplign statement `Y ~ normal(mu,sigma)` is vectorized, which requires that mu is declared as a vector.
+
+```{stan, output.var="gmm_model2"}
+data {
+  int<lower=1> N; // number of records
+  int<lower=1> NEQ; // number of earthquakes
+  int<lower=1> NSTAT; // number of earthquakes
+  
+  vector[N] M; // magnitudes
+  vector[N] R; // distances
+  vector[N] VS; // Vs30 values
+  vector[N] Y; // ln PGA values
+  
+  int<lower=1,upper=NEQ> idx_eq[N];
+  int<lower=1,upper=NSTAT> idx_stat[N];
+}
+
+transformed data {
+  real vref = 760;
+}
+
+parameters {
+  real theta1;
+  real theta2;
+  real theta3;
+  real theta4;
+  real theta5;
+  real theta6;
+  real theta7;
+  
+  real<lower=0> h;
+  
+  real<lower=0> phiSS;
+  real<lower=0> tau;
+  real<lower=0> phiS2S;
+  
+  vector[NEQ] deltaB;
+  vector[NSTAT] deltaS;
+}
+
+model {
+  vector[N] mu;
+
+  theta1 ~ normal(0,10);
+  theta2 ~ normal(0,10);
+  theta3 ~ normal(0,10);
+  theta4 ~ normal(0,10);
+  theta5 ~ normal(0,10);
+  theta6 ~ normal(0,10);
+  theta7 ~ normal(0,10);
+  h ~ normal(6,4);
+  
+  phiSS ~ cauchy(0,0.5);
+  phiS2S ~ cauchy(0,0.5);
+  tau ~ cauchy(0,0.5);
+  
+  deltaB ~ normal(0,tau);
+  deltaS ~ normal(0,phiS2S);
+  
+  for(i in 1:N) {
+    mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
+  }
+  Y ~ normal(mu,phiSS);
+}
+```
+
+Often, `h` is modeled as magnitude dependent, such as $h = a \exp(bM)$.
+This can be easily incorporated.
+
+```{}
+
+parameters {
+...
+  real a;
+  real b;
+}
+
+model {}
+...
+  for(i in 1:N) {
+    mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + a * exp(b * M[i])) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
+  }
+  Y ~ normal(mu,phiSS);
+}
+```
+
+Since `a` and `b` are typically hard to estimate from data, they should be given informative priors.
+
+# Correlated Random Effects
+
+Below, we show an example how one could model multiple random effects for the same level.
+We assume that for each event, there is an event-specific near-fault-saturation term, which is distributed around a mean function $a \exp (b M)$, i.e.
+$$
+h_e = a \exp(b M_e + \delta B_{2,e})
+$$
+First, we just add a new variable for this term to the model.
+```{stan, output.var="gmm_model2_correlated_deltaB"}
+data {
+  int<lower=1> N; // number of records
+  int<lower=1> NEQ; // number of earthquakes
+  int<lower=1> NSTAT; // number of earthquakes
+  
+  vector[N] M; // magnitudes
+  vector[N] R; // distances
+  vector[N] VS; // Vs30 values
+  vector[N] Y; // ln PGA values
+  
+  int<lower=1,upper=NEQ> idx_eq[N];
+  int<lower=1,upper=NSTAT> idx_stat[N];
+}
+
+transformed data {
+  real vref = 760;
+}
+
+parameters {
+  real theta1;
+  real theta2;
+  real theta3;
+  real theta4;
+  real theta5;
+  real theta6;
+  real theta7;
+  
+  real a;
+  real b;
+  
+  real<lower=0> phiSS;
+  real<lower=0> tau;
+  real<lower=0> phiS2S;
+  real<lower=0> tau_h;
+  
+
+  vector[NEQ] deltaB;
+  vector[NEQ] deltaB2;
+  
+  vector[NSTAT] deltaS;
+}
+
+model {
+  vector[N] mu;
+
+  theta1 ~ normal(0,10);
+  theta2 ~ normal(0,10);
+  theta3 ~ normal(0,10);
+  theta4 ~ normal(0,10);
+  theta5 ~ normal(0,10);
+  theta6 ~ normal(0,10);
+  theta7 ~ normal(0,10);
+  
+  phiSS ~ cauchy(0,0.5);
+  phiS2S ~ cauchy(0,0.5);
+  tau ~ cauchy(0,0.5);
+  
+  deltaS ~ normal(0,phiS2S);
+  deltaB ~ normal(0,tau);
+  deltaB2 ~ normal(0,tau_h);
+  
+  for(i in 1:N) {
+    mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + a * exp(b * M[i] + deltaB2[idx_eq[i]])) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
+  }
+  Y ~ normal(mu,phiSS);
+}
+```
+
+Next, we model the two event terms as correlated, i.e. disributed according to a multivariate normal distribution
+$$
+\vec{\delta B} \sim N(\vec{0},\Sigma)
+$$
+Thus, we now declare the event terms `deltaB` as an array of length `NEQ` of two-dimensional vectors, corresponding to the constant random effect and the event-specific near-fault-term.
+The prior for the covariance matrix $\Sigma$ is separated into a prior for the standard deviations `tau` and one for the correlation marix `C_eq`, which is based on [@Lewandowski2009].
+These are combined into the covariance matrix via `Sigma_eq = quad_form_diag(C_eq,tau)`, where `quad_form_diag(C_eq,tau) = diag_matrix(tau) * C_eq * diag_matrix(tau)`.
+
+```{stan, output.var="gmm_model2_correlated_deltaB"}
+data {
+  int<lower=1> N; // number of records
+  int<lower=1> NEQ; // number of earthquakes
+  int<lower=1> NSTAT; // number of earthquakes
+  
+  vector[N] M; // magnitudes
+  vector[N] R; // distances
+  vector[N] VS; // Vs30 values
+  vector[N] Y; // ln PGA values
+  
+  int<lower=1,upper=NEQ> idx_eq[N];
+  int<lower=1,upper=NSTAT> idx_stat[N];
+}
+
+transformed data {
+  real vref = 760;
+  vector[2] mu_eq;
+  
+  for(i in 1:2)
+    mu_eq[i] = 0;
+}
+
+parameters {
+  real theta1;
+  real theta2;
+  real theta3;
+  real theta4;
+  real theta5;
+  real theta6;
+  real theta7;
+  
+  real a;
+  real b;
+  
+  real<lower=0> phiSS;
+  vector<lower=0>[2] tau;
+  real<lower=0> phiS2S;
+  
+  corr_matrix[2] C_eq;
+  vector[2] deltaB[NEQ];
+  
+  vector[NSTAT] deltaS;
+}
+
+model {
+  vector[N] mu;
+  matrix[2,2] Sigma_eq;
+
+  theta1 ~ normal(0,10);
+  theta2 ~ normal(0,10);
+  theta3 ~ normal(0,10);
+  theta4 ~ normal(0,10);
+  theta5 ~ normal(0,10);
+  theta6 ~ normal(0,10);
+  theta7 ~ normal(0,10);
+  
+  phiSS ~ cauchy(0,0.5);
+  phiS2S ~ cauchy(0,0.5);
+  tau ~ cauchy(0,0.5);
+  
+  deltaS ~ normal(0,phiS2S);
+  
+  C_eq ~ lkj_corr(2);
+  Sigma_eq = quad_form_diag(C_eq,tau);
+  deltaB ~ multi_normal(mu_eq,Sigma_eq);
+  
+  for(i in 1:N) {
+    mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + a * exp(b * M[i] + deltaB[idx_eq[i],2])) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i],1] + deltaS[idx_stat[i]];
+  }
+  Y ~ normal(mu,phiSS);
+}
+```
+
+This model can also be coded in a different way, based on the Cholesky factorization of the correlated event terms, which should be more efficient.
+
+```{stan, output.var="gmm_model2_correlated_deltaB2"}
+data {
+  int<lower=1> N; // number of records
+  int<lower=1> NEQ; // number of earthquakes
+  int<lower=1> NSTAT; // number of earthquakes
+  
+  vector[N] M; // magnitudes
+  vector[N] R; // distances
+  vector[N] VS; // Vs30 values
+  vector[N] Y; // ln PGA values
+  
+  int<lower=1,upper=NEQ> idx_eq[N];
+  int<lower=1,upper=NSTAT> idx_stat[N];
+}
+
+transformed data {
+  real vref = 760;
+  vector[2] mu_eq;
+  
+  for(i in 1:2)
+    mu_eq[i] = 0;
+}
+
+parameters {
+  real theta1;
+  real theta2;
+  real theta3;
+  real theta4;
+  real theta5;
+  real theta6;
+  real theta7;
+  
+  real a;
+  real b;
+  
+  real<lower=0> phiSS;
+  vector<lower=0>[2] tau;
+  real<lower=0> phiS2S;
+  
+  cholesky_factor_corr[2] L_eq;
+  matrix[2,NEQ] z_eq;
+  
+  vector[NSTAT] deltaS;
+}
+
+transformed parameters {
+  matrix[2,NEQ] deltaB;
+
+  deltaB = diag_pre_multiply(tau, L_eq) * z_eq;
+
+}
+
+model {
+  vector[N] mu;
+  matrix[2,2] Sigma_eq;
+
+  theta1 ~ normal(0,10);
+  theta2 ~ normal(0,10);
+  theta3 ~ normal(0,10);
+  theta4 ~ normal(0,10);
+  theta5 ~ normal(0,10);
+  theta6 ~ normal(0,10);
+  theta7 ~ normal(0,10);
+  
+  phiSS ~ cauchy(0,0.5);
+  phiS2S ~ cauchy(0,0.5);
+  tau ~ cauchy(0,0.5);
+  
+  deltaS ~ normal(0,phiS2S);
+  
+  L_eq ~ lkj_corr_cholesky(2);
+  to_vector(z_eq) ~ normal(0,1);
+  
+  
+  for(i in 1:N) {
+    mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + a * exp(b * M[i] + deltaB[2,idx_eq[i]])) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[1,idx_eq[i]] + deltaS[idx_stat[i]];
+  }
+  Y ~ normal(mu,phiSS);
+}
+```
+
+
+## Partially Nonergodic Models
+
+Over the last few years it has been recognized that the ergodic assumption [@Anderson1999] (that the ground-motion distribution at a site over time is the same as the ground-motion distribution over space) can lead to biased hazard results.
+With an incrasing amount of data in different regions, the ergodic assumption can be relaxed.
+An intermediate step towards fully nonergodic models are partially nonergodic models (though one can argue that models that account for systematic station terms $\delta S$ are already partially nonergodic) in which some of the parameters are different for different regions.
+Ofen, the constant, anelastic attenuation coefficient, and the site-scaling coefficient are regionally dependent [@Stafford2014,@Kotha2016,@Sedaghati2017,@Kuehn2016].
+It makes sense to model these as regional random effects, since in that case the coefficient for regions with a smaller amount of data are automatically associated with larger uncertainty (in the Bayesian case, a wider posterior distribution).
+Typically, one assumes that the regional random effects are distributed according to a normal distribution, where the regional coefficients are samples from a global coefficient (e.g. for the constant $\theta_1$)
+$$
+\theta_1 \sim \mathcal N(\mu_{\theta 1},\sigma_{\theta 1})
+$$
+where $\mu_{\theta 1}$ is the (global) mean (over the data set) for the constant coefficient and $\sigma_{\theta 1}$ is the standard deviation which determines how much the regional coefficients can differ from the global mean.
+Below, we have written a Stan model with regional coefficients for the constant, the anelastic attenuation (linear R scaling) and the $V_{S30}$-scaling.
+We add an integer for the number of regions, as well as an integer comprising the region indices for the records to the `data {}` block.
+We then declare the mean coefficients and vectors for the regional coefficients, as well as the standard deviations.
+In this case, the regional parameters are declared as independent, but they can also be modeled as correlated as explained previously.
+We have declared the regional parameters `theta6` (linear R term) with `vector<upper=0>[NREG] theta6`, so they are constrained to be negative.
+This is a physical requirement, but in particular for partially nonergodic models it can happen that a regional coefficient becomes positive if data is sparse - this can also happen for long periods, where the coefficient typically approaches zero.
+The constraint makes sure that this does not happen.
+
+
+```{stan, output.var="gmm_model_partially_nonergodic"}
+data {
+  int<lower=1> N; // number of records
+  int<lower=1> NEQ; // number of earthquakes
+  int<lower=1> NSTAT; // number of earthquakes
+  int<lower=1> NREG; // number of regions
+  
+  vector[N] M; // magnitudes
+  vector[N] R; // distances
+  vector[N] VS; // Vs30 values
+  vector[N] Y; // ln PGA values
+  
+  int<lower=1,upper=NEQ> idx_eq[N];
+  int<lower=1,upper=NSTAT> idx_stat[N];
+  int<lower=1,upper=NREG> idx_reg[N];
+}
+
+transformed data {
+  real vref = 760;
+}
+
+parameters {
+  real mu_theta1;
+  real theta2;
+  real theta3;
+  real theta4;
+  real theta5;
+  real mu_theta6;
+  real mu_theta7;
+  
+  real<lower=0> h;
+  
+  real<lower=0> phiSS;
+  real<lower=0> tau;
+  real<lower=0> phiS2S;
+  
+  real<lower=0> sigma_theta1;
+  real<lower=0> sigma_theta6;
+  real<lower=0> sigma_theta7;
+  
+  vector[NEQ] deltaB;
+  vector[NSTAT] deltaS;
+  
+  vector[NREG] theta1;
+  vector<upper=0>[NREG] theta6;
+  vector[NREG] theta7;
+}
+
+model {
+  vector[N] mu;
+
+  mu_theta1 ~ normal(0,10);
+  theta2 ~ normal(0,10);
+  theta3 ~ normal(0,10);
+  theta4 ~ normal(0,10);
+  theta5 ~ normal(0,10);
+  mu_theta6 ~ normal(0,10);
+  mu_theta7 ~ normal(0,10);
+  h ~ normal(6,4);
+  
+  phiSS ~ cauchy(0,0.5);
+  phiS2S ~ cauchy(0,0.5);
+  tau ~ cauchy(0,0.5);
+  
+  sigma_theta1 ~ cauchy(0,0.5);
+  sigma_theta6 ~ cauchy(0,0.01);
+  sigma_theta7 ~ cauchy(0,0.3);
+  
+  deltaB ~ normal(0,tau);
+  deltaS ~ normal(0,phiS2S);
+  
+  theta1 ~ normal(mu_theta1,sigma_theta1);
+  theta6 ~ normal(mu_theta6,sigma_theta6);
+  theta7 ~ normal(mu_theta7,sigma_theta7);
+  
+  for(i in 1:N) {
+    mu[i] = theta1[idx_reg[i]] + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6[idx_reg[i]] * R[i] + theta7[idx_reg[i]] * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
+  }
+  Y ~ normal(mu,phiSS);
+}
+```
+
+The model can be rewritten, using a so-called non-centered parameterization, by recognizing that
+$$
+\theta_1 \sim \mathcal N(\mu_{\theta 1},\sigma_{\theta 1})
+$$
+is the same as
+$$
+\theta_1 = \mu_{\theta 1} + z \sigma_{\theta 1}\\
+z \sim \mathcal N(0,1)
+$$
+Hence, we now declare a vector `z` of length `NREG` for each regionally varying coefficient, which has a standard normal prior distribution, and calculate the parameters in the `transformed parameters {}` block according to the above equation.
+To ensure that `theta6` is positive, we updated the upper limit for `z6` (this also serves as an example that parameters can be used as upper/lower limits).
+The rest of the model is the same.
+
+```{stan, output.var="gmm_model_partially_nonergodic_noncentered"}
+data {
+  int<lower=1> N; // number of records
+  int<lower=1> NEQ; // number of earthquakes
+  int<lower=1> NSTAT; // number of earthquakes
+  int<lower=1> NREG; // number of regions
+  
+  vector[N] M; // magnitudes
+  vector[N] R; // distances
+  vector[N] VS; // Vs30 values
+  vector[N] Y; // ln PGA values
+  
+  int<lower=1,upper=NEQ> idx_eq[N];
+  int<lower=1,upper=NSTAT> idx_stat[N];
+  int<lower=1,upper=NREG> idx_reg[N];
+}
+
+transformed data {
+  real vref = 760;
+}
+
+parameters {
+  real mu_theta1;
+  real theta2;
+  real theta3;
+  real theta4;
+  real theta5;
+  real mu_theta6;
+  real mu_theta7;
+  
+  real<lower=0> h;
+  
+  real<lower=0> phiSS;
+  real<lower=0> tau;
+  real<lower=0> phiS2S;
+  
+  real<lower=0> sigma_theta1;
+  real<lower=0> sigma_theta6;
+  real<lower=0> sigma_theta7;
+  
+  vector[NEQ] deltaB;
+  vector[NSTAT] deltaS;
+  
+  vector[NREG] z1;
+  vector<upper=-mu_theta6/sigma_theta6>[NREG] z6;
+  vector[NREG] z7;
+}
+
+transformed parameters {
+  vector[NREG] theta1;
+  vector[NREG] theta6;
+  vector[NREG] theta7;
+  
+  theta1 = mu_theta1 + z1 * sigma_theta1;
+  theta6 = mu_theta6 + z6 * sigma_theta6;
+  theta7 = mu_theta7 + z7 * sigma_theta7;
+}
+
+model {
+  vector[N] mu;
+
+  mu_theta1 ~ normal(0,10);
+  theta2 ~ normal(0,10);
+  theta3 ~ normal(0,10);
+  theta4 ~ normal(0,10);
+  theta5 ~ normal(0,10);
+  mu_theta6 ~ normal(0,10);
+  mu_theta7 ~ normal(0,10);
+  h ~ normal(6,4);
+  
+  phiSS ~ cauchy(0,0.5);
+  phiS2S ~ cauchy(0,0.5);
+  tau ~ cauchy(0,0.5);
+  
+  sigma_theta1 ~ cauchy(0,0.5);
+  sigma_theta6 ~ cauchy(0,0.01);
+  sigma_theta7 ~ cauchy(0,0.3);
+  
+  deltaB ~ normal(0,tau);
+  deltaS ~ normal(0,phiS2S);
+  
+  z1 ~ normal(0,1);
+  z6 ~ normal(0,1);
+  z7 ~ normal(0,1);
+  
+  for(i in 1:N) {
+    mu[i] = theta1[idx_reg[i]] + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6[idx_reg[i]] * R[i] + theta7[idx_reg[i]] * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
+  }
+  Y ~ normal(mu,phiSS);
+}
+```
+
+
+In the previous two partially nonergodic models, the prior distribution for the regional standard deviations `sigma_theta1`, `sigma_theta6` and `sigma_theta7` was a half-cauchy distribution.
+This is based on a recomendation by [@Gelman2006b].
+However, the half-cauchy distribution has very heavy tails, which can lead to unrealistically high values of the standard deviation and thus spurious regional deviations from the global mean coefficient (the deviation is $z \sigma_{\theta}$) if the number of regions is small.
+This is also a problem of maximum-likelihood estimation with a small number of groups.
+For event terms and station terms, this is less of a problem since there are many events/stations for each data set, but the number of regions is typically small (<10), which can make it hard o estimate the regional standard deviation.
+In that case, stronger prior information is needed - for example, an exponential distribution or a normal or Student-t distribution might be better.
+These can be implemented as
+
+``` {}
+  sigma_par1 ~ exponential(1);
+  sigma_par1 ~ normal(0,1);
+  sigma_par1 ~ student_t ~ (6,0,1);
+```
+
+What is generally important is that the prior distribution should be scaled based on the effects.
+This is a complicated topic, and general advice that works in every situation is difficult.
+
+## Robust Regression
+
+Sometimes a data set has outliers, and these outliers can severley affect both the mean and standard deviation ($\phi$) of an estimated model - often, GMPE developers discard some records which are obvious outliers (these might be of low quality due to processing errors).
+One way to mitigate the effect of outlier data points on the model is to use robust regression - in robust regression, one tries to limit the influence of a data point that is far from the regression line.
+For example, one way to do that would be to minimize the absolute residuals and not the squared residuals.
+In a Bayesian model, one way to do ribust regression is to replace the data likelihood (upt to now a normal distribution) with a Student-t distribution with low degrees-of-freedom.
+Such a distribution has heavier tails than the normal distribution and thus is less sensitive to outliers.
+Such a model can be coded in Stan as follows (see also <http://doingbayesiandataanalysis.blogspot.com/2013/06/bayesian-robust-regression-for-anscombe.html> or <https://jrnold.github.io/bayesian_notes/robust-regression.html>)
+
+``` {}
+...
+parameters {
+  real<lower=1> nu;
+}
+model {
+  ...
+  nu ~ gamma(2,0.1);
+  ...
+
+  Y ~ normal(nu,mu,sigma);
+}
+...
+```
+
+Here, we declare a new parameter `nu` for the degrees-of-freedom, which is given a gamma prior (following [@Juarez2010]).
+The rest of the model is the same, except that the sampling statement for the data is changed from the normal distribution to the Student-t distribution.
+
+## Heteroscedastic models
+
+``` {}
+...
+parameters {
+  ...
+  real<lower=0> tau1;
+  real<lower=0> tau2;
+
+}
+
+transformed parameters {
+  vector[NEQ] tau;
+  
+  for(i in 1:NEQ) {
+    if(M[i] < 5)
+      tau[i] = tau1;
+    else if (M[i] < 6)
+      tau[i] = tau1 + (tau2 - tau1) * (M[i] - 5);
+    else
+      tau[i] = tau2;
+  }
+}
+
+model {
+  ...
+  deltaB ~ normal(0,tau);
+}
+```
+
+## Truncated regression
+
+If data comes from e.g. triggered instruments, it is truncated.
+If this is not taken into account, the regression estimates will be biased [@Chao2018,@Bragato2004].
+Truncated regression can be performed in Stan using the following adjustment to the sampling statement.
+Truncated sampling statements cannot be vectorized, so it is moved into the loop (which unfortunately is less efficient).
+
+
+``` {}
+data {
+  ...
+  real trigger_level;
+}
+...
+
+model {
+  ...
+  for(i in 1:N) {
+    real mu;
+    mu = ...;
+    Y[i] ~ normal(mu,phiSS) T(trigger_level,);
+  }
+}
+```
+
+## Missing Data
+
+Sometimes, there is missing data for some records.
+Typically in GMPE estimation, these records are ignored.
+However, there are methods how one can deal with missing data [@Rubin1976a,@Allison2002].
+A standard method is multiple imputation, for example implemented in the R-package `mi` [@Su2011] or `mice` [@vanBuuren2011].
+In Stan (or Bayesian inference in general), one can declare a missing data point as a parameter in the model, which is estimated.
+Since a posterior distribution is estimated for the missing data (with different samples), this functions as some sort of multiple imputation.
+
+Below, we show an example, where we assume that some $V_{S30}$-values are missing.
+Since each station has a unique $V_{S30}$-value, that means that we declare the input $V_{S30}$-values for each stations via `vector[N] VS;`.
+Similar to the station term,this means that we also need the index connecting stations to records.
+We also need a new index which comprises the indices of the missing values, as well as the number of stations with missing values.
+For example, if the second and tenth station had an unknown $V_{S30}$-value, then the array of missing values would be of length 2 and consists of `c(2,10)`.
+
+The missing values are declared as `vector[N_missing_VS] VS_missing;`.
+Since we cannot assign new values to loaded data, we declare a new variable in the `transformed parameters {}` block, which contains the original `VS` values, and the estimated missing values for the correct indices.
+This new variable is then used in the calcuation of the median prediction.
+
+The missing values should be assigned an informative prior distribution.
+If this is not available, one could use the (geometric) mean and standard deviation of the available $V_{S30}$-values.
+Instead of estimating $V_{S30}$, one could also estimate $\ln V_{S30}$.
+
+``` {stan, output.var = "gmm_model2_missingVS"}
+data {
+  int<lower=1> N; // number of records
+  int<lower=1> NEQ; // number of earthquakes
+  int<lower=1> NSTAT; // number of earthquakes
+  int<lower=1,upper=NSTAT> N_missing_VS;
+  
+  vector[N] M; // magnitudes
+  vector[N] R; // distances
+  vector[NSTAT] VS; // Vs30 values
+  vector[N] Y; // ln PGA values
+  
+  int<lower=1,upper=NEQ> idx_eq[N];
+  int<lower=1,upper=NSTAT> idx_stat[N];
+  int<lower=1,upper=NSTAT> idx_missing_vs[N_missing_VS];
+}
+
+transformed data {
+  real vref = 760;
+}
+
+parameters {
+  real theta1;
+  real theta2;
+  real theta3;
+  real theta4;
+  real theta5;
+  real theta6;
+  real theta7;
+  
+  real<lower=0> h;
+  
+  real<lower=0> phiSS;
+  real<lower=0> tau;
+  real<lower=0> phiS2S;
+  
+  vector[NEQ] deltaB;
+  vector[NSTAT] deltaS;
+  
+  vector<lower=0>[N_missing_VS] VS_missing;
+}
+
+transformed parameters {
+  vector[NSTAT] VS_imputed;
+  
+  VS_imputed = VS;
+  
+  for(i in 1:N_missing_VS)
+    VS_imputed[idx_missing_vs[i]] = VS_missing[i];
+}
+
+model {
+  vector[N] mu;
+
+  theta1 ~ normal(0,10);
+  theta2 ~ normal(0,10);
+  theta3 ~ normal(0,10);
+  theta4 ~ normal(0,10);
+  theta5 ~ normal(0,10);
+  theta6 ~ normal(0,10);
+  theta7 ~ normal(0,10);
+  h ~ normal(6,4);
+  
+  phiSS ~ cauchy(0,0.5);
+  phiS2S ~ cauchy(0,0.5);
+  tau ~ cauchy(0,0.5);
+  
+  deltaB ~ normal(0,tau);
+  deltaS ~ normal(0,phiS2S);
+  
+  VS_missing ~ lognormal(400,0.5); // some prior should be set (if no information, maybe mean/sd of dataset)
+  
+  for(i in 1:N) {
+    mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS_imputed[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
+  }
+  Y ~ normal(mu,phiSS);
+}
+```
+
+## Measurement error models
+
+See [@Kuehn2018] (need to expand).
+
+```{r session_info, include=TRUE, echo=TRUE, results='markup'}
+devtools::session_info()
+```
