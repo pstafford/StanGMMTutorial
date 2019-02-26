@@ -1125,10 +1125,10 @@ The inclusion of random effects for events also has a block diagonal structure o
 A current limitation of `stan` is that it does not have the ability to handle _ragged_ data structures.
 That is, we cannot define an array that hold arrays or matrices of differing size as its elements.
 When working with correlations among the observations of each event such a data structure would be very useful as it would allow us to define inter-station distance matrices for each event seperately.
-Instead we can have a few options:
-- manually define $n_{eq}$ distance matrices for each event (either passed to `stan` as data, or created within `stan` from station coordinates);
-- work with a single very large $n\times n$ distance, and hence correlation and covariance matrix; or,
-- have some large $n\times n$ distance matrix, but only work with event-specific blocks for the purposes of sampling
+Instead we can have a few options:  
+* manually define $n_{eq}$ distance matrices for each event (either passed to `stan` as data, or created within `stan` from station coordinates);  
+* work with a single very large $n\times n$ distance, and hence correlation and covariance matrix; or,  
+* have some large $n\times n$ distance matrix, but only work with event-specific blocks for the purposes of sampling  
 
 The first of these options, while ultimately the most computationally efficient, does not scale well to analyses that consider a large number of events. 
 The second option, while the easiest to implement programatically, is the least computationally efficient.
