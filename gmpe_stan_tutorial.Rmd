@@ -54,7 +54,7 @@ data <- read.csv('DATA/NGA_West2_Flatfile_RotD50_d050_public_version_subsetASK.c
 dim(data)
 ```
 
-The data set consists of 2000 records with 274 fiels, which contain the meta data such as magnitudes, distances and so on.
+The data set consists of 2000 records with 274 fields, which contain the meta data such as magnitudes, distances and so on.
 
 First, we fit a linear model using `lmer`, from the **R** package **lme4**, to the data.
 The package **lme4** is the successor to the package **nlme** and together these packages have been used quite extensively for the purposes of calibrating ground-motion models in the past.
@@ -67,24 +67,24 @@ In this example, we fix it to `h = 6`.
 
 
 ```{r fit_lme4}
-h <- 6;
-vref = 760;
-M = data$Earthquake.Magnitude;
-M_sq = M^2;
-R = data$ClstD..km.;
-lnR = log(R + h);
-MlnR = M * log(R + h);
-lnVS = log(data$Vs30..m.s..selected.for.analysis/vref);
+h <- 6
+vref <- 760
+M <- data$Earthquake.Magnitude
+M_sq <- M^2
+R <- data$ClstD..km.
+lnR <- log(R + h)
+MlnR <- M * log(R + h)
+lnVS <- log(data$Vs30..m.s..selected.for.analysis/vref)
 
-EQID = data$EQID;
-STATID = data$Station.Sequence.Number;
+EQID <- data$EQID
+STATID <- data$Station.Sequence.Number
 
-Y = log(data$PGA..g.);
+Y <- log(data$PGA..g.)
 
-data_regression =  data.frame(M,M_sq,R,lnR,MlnR,lnVS,Y,EQID);
+data_regression <- data.frame(M,M_sq,R,lnR,MlnR,lnVS,Y,EQID)
 
-fit_lmer = lmer(Y ~ 1 + M_sq + lnR + M * lnR + lnVS
-                + (1|EQID),data=data_regression);
+fit_lmer <- lmer(Y ~ 1 + M_sq + lnR + M * lnR + lnVS
+                + (1|EQID), data=data_regression)
 ```
 
 This code fits a linear mixed effects model with one random effect for earthquakes (commonly called event terms).
@@ -1085,7 +1085,257 @@ See [@Kuehn2018] (need to expand).
 
 ## Incorporating Spatial Correlation
 
-Ground-motion observations made at closely-spaced locations will be correlated, yet the models considered thus far do not account for this.
+Ground-motion observations made at closely-spaced locations will be correlated by virtue of the fact that they sample similar travel paths from source to site.
+This means that directionality effects from the source will be similar and that near-surface crustal amplification effects will also be similar.
+The models considered thus far do not account for this.
+Studies like @Jayaram:2009gm derive spatial correlation models of the form:
+$$
+  \rho(\boldsymbol{x}_i,\boldsymbol{x}_j) = \exp\left( -\frac{||\boldsymbol{x}_i-\boldsymbol{x}_j||}{r_c}\right)
+$$
+using within-event residuals computed from ground-motion models.
+Within-event residuals $\boldsymbol{\varepsilon}(\boldsymbol{x})$ are computed for all observations made for each event and the spatial correlation among these observations is well represented by the exponential model shown above that depends upon a single parameter $r_c$ which is the correlation length.
+@Jayaram:2010bo showed how to account for some known degree of spatial correlation within the traditional random-effects regression framework of [@Abrahamson1992] when only a random effect for each event is considered.
+The extension to more elaborate cases where multiple random effects are considered is more challenging to deal with, but can be handled using `stan` [@Stafford:2018dn].
+
+Note that @Jayaram:2009gm work with within-event residuals, but not site-corrected within-event residuals. 
+As a result, they find that the correlation length $r_c$ differs from region-to-region depending upon the degree of correlation among sites with similar levels of $V_{S,30}$.
+In a model where random effects are considered for each site we should expect less spatial correlation as the site random effects will be spatially correlated and this portion of the correlation is no longer contained in the site-corrected within-event residuals.
+In `stan`, random effects for site, or for event, can also be regarded as being spatially-correlated, but in the example below we focus upon the representation of the site-corrected within-event residuals.
+
+In the previously considered models the covariance matrix of the within-event residuals was equivalent to:
+$$
+  \boldsymbol{\Sigma_\varepsilon} = \phi_{SS} \boldsymbol{I}_{n}
+$$
+where $\boldsymbol{I}_n$ is an $n\times n$ identity matrix.
+When spatial correlations are considered this changes to:
+$$
+  \boldsymbol{\Sigma_\varepsilon} = \phi_{SS} \boldsymbol{\Lambda}_{n}(\boldsymbol{x};r_c)
+$$
+where $\boldsymbol{\Lambda}_{n}(\boldsymbol{x};r_c)$ is an $n\times n$ correlation matrix that is obtained by computing the exponential correlation as a function of inter-station distances and the correlation length $r_c$.
+However, as we only consider the spatial correlations within each event we have a block-diagonal structure for $\boldsymbol{\Lambda}_{n}(\boldsymbol{x};r_c)$.
+$$
+  \boldsymbol{\Lambda}_{n}(\boldsymbol{x};r_c) \equiv \boldsymbol{\Lambda}_{n_{rec}^{(1)}}(\boldsymbol{x};r_c,eq^{(1)}) \oplus \boldsymbol{\Lambda}_{n_{rec}^{(2)}}(\boldsymbol{x};r_c,eq^{(2)}) \oplus \ldots \oplus \boldsymbol{\Lambda}_{n_{rec}^{(n_{eq})}}(\boldsymbol{x};r_c,eq^{(n_{eq})})
+$$
+where $\oplus$ is the direct sum operator, and the $\boldsymbol{\Lambda}_{n_{rec}^{(i)}}$ represents the within-event covariance matrix for earthquake $i$. 
+This within-event covariance matrix is of size $n_{rec}^{(i)}\times n_{rec}^{(i)}$, with $\sum_{i}^{n_{eq}} n_{rec}^{(i)} = n$
+
+Note that this block diagonal structure holds only for the event- and site-corrected within-event residuals.
+The inclusion of random effects for events also has a block diagonal structure of the same form as the spatial covariance matrix $\boldsymbol{\Lambda}(\boldsymbol{x};r_c)$, but considering random effects for sites adds elements that _link_ blocks by virtue of the fact that the same sites record multiple events.
+
+A current limitation of `stan` is that it does not have the ability to handle _ragged_ data structures.
+That is, we cannot define an array that hold arrays or matrices of differing size as its elements.
+When working with correlations among the observations of each event such a data structure would be very useful as it would allow us to define inter-station distance matrices for each event seperately.
+Instead we can have a few options:
+- manually define $n_{eq}$ distance matrices for each event (either passed to `stan` as data, or created within `stan` from station coordinates);
+- work with a single very large $n\times n$ distance, and hence correlation and covariance matrix; or,
+- have some large $n\times n$ distance matrix, but only work with event-specific blocks for the purposes of sampling
+
+The first of these options, while ultimately the most computationally efficient, does not scale well to analyses that consider a large number of events. 
+The second option, while the easiest to implement programatically, is the least computationally efficient.
+Generally speaking, matrix operations (like Cholesky factorisation, matrix inversion, _etc_) tend to scale as $\mathcal{O}(n^3)$.
+Therefore, the third option of accessing sub-blocks tends to be the preferred option currently.
+Accessing sub-blocks of the matrix requires a local copy to be made which has a cost associated with it, but this is offset by enabling the use of smaller $n$ for each matrix operation.
+The example code below shows the use of this latter approach.
+
+### Known spatial correlation length
+
+This code corresponds to a case in which the correlation length is assumed known ahead of the regression analysis and so the spatial correlation matrix can be passed with its block-diagonal structure as data.
+Also passed is `ObsPerEvent` which is an array of length `NEQ` defining how many records each event has.
+This array is used to define indexing into the vectors of observations and means as well as the covariance matrix using calls such as:
+```{}
+...
+vector[ObsPerEvent[i]] eventMu = segment(mu, epos, ObsPerEvent[i]);
+matrix[ObsPerEvent[i],ObsPerEvent[i]] eventLCov = phiSS * block( LspatialCorrelationMatrix, epos, epos, ObsPerEvent[i], ObsPerEvent[i] );
+...
+```
+where `segment(x, i, n)` extracts a portion of an array `x` starting at index `i` and inclusively taking the `n` consecutive elements.
+Similarly, `block(X, i, j, ni, nj)` extracts a sub-matrix from `X` starting from index `(i,j)` and taking `ni` elements in the first dimension and `nj` elements in the second dimension.
+In order for this approach to work, the observations need to be sorted so that they are grouped by event and that this indexing operations will be accessing contiguous data corresponding to each event.
+
+```{stan, output.var = "gmm_model_spatial_correlation_fixed"}
+data {
+  int<lower=1> N; // number of records
+  int<lower=1> NEQ; // number of earthquakes
+  int<lower=1> NSTAT; // number of earthquakes
+  
+  vector[N] M; // magnitudes
+  vector[N] R; // distances
+  vector[N] VS; // Vs30 values
+  vector[N] Y; // ln PGA values
+  
+  int<lower=1,upper=NEQ> idx_eq[N];
+  int<lower=1,upper=NSTAT> idx_stat[N];
+  
+  matrix[N,N] spatialCorrelationMatrix; // within-event correlation matrix (block diagonal matrix)
+  int<lower=1,upper=NEQ> ObsPerEvent[NEQ];
+}
+
+transformed data {
+  real vref = 760;
+  // taking Cholesky here is only valid if spatial correlation matrix is block diagonal
+  cholesky_factor_corr[N] LspatialCorrelationMatrix = cholesky_decompose(spatialCorrelationMatrix);
+}
+
+parameters {
+  real theta1;
+  real theta2;
+  real theta3;
+  real theta4;
+  real theta5;
+  real theta6;
+  real theta7;
+  
+  real<lower=0> h;
+  
+  real<lower=0> phiSS;
+  real<lower=0> tau;
+  real<lower=0> phiS2S;
+  
+  vector[NEQ] deltaB;
+  vector[NSTAT] deltaS;
+}
+
+model {
+  vector[N] mu;
+
+  theta1 ~ normal(0,10);
+  theta2 ~ normal(0,10);
+  theta3 ~ normal(0,10);
+  theta4 ~ normal(0,10);
+  theta5 ~ normal(0,10);
+  theta6 ~ normal(0,10);
+  theta7 ~ normal(0,10);
+  h ~ normal(6,4);
+  
+  phiSS ~ cauchy(0,0.5);
+  phiS2S ~ cauchy(0,0.5);
+  tau ~ cauchy(0,0.5);
+  
+  deltaB ~ normal(0,tau);
+  deltaS ~ normal(0,phiS2S);
+  
+  for(i in 1:N) {
+    mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
+  }
+
+  {
+    int epos;
+    epos = 1;
+    for ( i in 1:NEQ ) {
+      if ( ObsPerEvent[i] > 1 ) {
+        vector[ObsPerEvent[i]] eventMu = segment(mu, epos, ObsPerEvent[i]);
+        matrix[ObsPerEvent[i],ObsPerEvent[i]] eventLCov = phiSS * block( LspatialCorrelationMatrix, epos, epos, ObsPerEvent[i], ObsPerEvent[i] );
+        segment(Y, epos, ObsPerEvent[i]) ~ multi_normal_cholesky( eventMu, eventLCov );
+      } else {
+        real eventMu = mu[epos];
+        Y[epos] ~ normal( eventMu, phiSS );
+      }
+      epos = epos + ObsPerEvent[i];
+    }
+  }
+}
+```
+
+### Unknown spatial correlation length
+In the case above we already knew the spatial correlation and so could compute the cholesky factor of the spatial correlation matrix within the `transformed data` block.
+In the case where we wish to solve for the spatial correlation length, things are not so simple.
+Now, as the correlation length will vary as a parameter of the model, the correlation matrix for each event will also be varying with every sample.
+The only attribute that remains fixed is the inter-station distance matrix.
+The code below demonstrates this case.
+Here we pass in the distance matrix along with the `ObsPerEvent` array.
+The event-specific mean and covariance matrices are computed _on the fly_ within the `model` block.
+This approach is far less efficient than the case where the spatial correlation is known in advance.
+Note that for the particular example considered here, it is not a good idea to try to derive the correlation length in this manner. 
+The example model being considered is too simplistic to adequately represent the scaling for all source-to-site combinations and so systematic biases will exist that become mapped into apparent spatial correlations.
+Generally speaking, this is also true for more detailed analyses as the ergodic mixing of the dataset leads to biases from event-to-event that appear as apparent correlations and extend estimates of the correlation length.
+Note also that studies like [@Jayaram:2009gm] also preferentially focus upon short inter-station separation distances when calibrating their correlation model as these distances are of greatest importance in practice and the consideration of larger separation distances tends to bias the computed correlation lengths.
+That said, region-specific studies where separation distances among stations are not large [@Stafford:2018dn] have obtained consistent results using both approaches.
+
+```{stan, output.var = "gmm_model_spatial_correlation_free"}
+data {
+  int<lower=1> N; // number of records
+  int<lower=1> NEQ; // number of earthquakes
+  int<lower=1> NSTAT; // number of earthquakes
+  
+  vector[N] M; // magnitudes
+  vector[N] R; // distances
+  vector[N] VS; // Vs30 values
+  vector[N] Y; // ln PGA values
+  
+  int<lower=1,upper=NEQ> idx_eq[N];
+  int<lower=1,upper=NSTAT> idx_stat[N];
+  
+  matrix[N,N] distanceMatrix; // inter-station distance matrix (for all records across all events)
+  int<lower=1,upper=NEQ> ObsPerEvent[NEQ];
+}
+
+transformed data {
+  real vref = 760;
+}
+
+parameters {
+  real theta1;
+  real theta2;
+  real theta3;
+  real theta4;
+  real theta5;
+  real theta6;
+  real theta7;
+  
+  real<lower=0> h;
+  
+  real<lower=0> phiSS;
+  real<lower=0> tau;
+  real<lower=0> phiS2S;
+  
+  vector[NEQ] deltaB;
+  vector[NSTAT] deltaS;
+
+  real<lower=0> correlationLength;
+}
+
+model {
+  vector[N] mu;
+
+  theta1 ~ normal(0,10);
+  theta2 ~ normal(0,10);
+  theta3 ~ normal(0,10);
+  theta4 ~ normal(0,10);
+  theta5 ~ normal(0,10);
+  theta6 ~ normal(0,10);
+  theta7 ~ normal(0,10);
+  h ~ normal(6,4);
+  
+  phiSS ~ cauchy(0,0.5);
+  phiS2S ~ cauchy(0,0.5);
+  tau ~ cauchy(0,0.5);
+  
+  deltaB ~ normal(0,tau);
+  deltaS ~ normal(0,phiS2S);
+  
+  correlationLength ~ cauchy(5,1);
+
+  for(i in 1:N) {
+    mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
+  }
+
+  {
+    int epos;
+    epos = 1;
+    for ( i in 1:NEQ ) {
+      if ( ObsPerEvent[i] > 1 ) {
+        vector[ObsPerEvent[i]] eventMu = segment(mu, epos, ObsPerEvent[i]);
+        matrix[ObsPerEvent[i],ObsPerEvent[i]] eventLCov = phiSS * cholesky_decompose( exp( -block(distanceMatrix, epos, epos, ObsPerEvent[i], ObsPerEvent[i] ) / correlationLength ) );
+        segment(Y, epos, ObsPerEvent[i]) ~ multi_normal_cholesky( eventMu, eventLCov );
+      } else {
+        real eventMu = mu[epos];
+        Y[epos] ~ normal( eventMu, phiSS );
+      }
+      epos = epos + ObsPerEvent[i];
+    }
+  }
+}
+```
 
 
 ```{r session_info, include=TRUE, echo=TRUE, results='markup'}
