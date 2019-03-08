@@ -3,7 +3,10 @@ title: "GMPE Estimation Using Stan - Tutorial"
 author: "Nicolas Kuehn and Peter Stafford"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
-  html_document: default
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
   pdf_document: default
 bibliography: references.bib
 ---
@@ -13,7 +16,7 @@ knitr::opts_chunk$set(echo = TRUE, fig.width=12,fig.height = 8, fig.path = 'pict
 # setwd('/Users/nico/Dropbox/WORK/STAN_Tutorial/')
 ```
 
-## Introduction
+# Introduction
 
 This is a tutorial on how to use the program Stan (<https://mc-stan.org/>) to estimate the parameters of a ground-motion prediction equation (GMPE).
 Stan is a program that uses Bayesian inference to estimate the parameters of a model via Markov Chain Monte Carlo (MCMC) sampling.
@@ -31,7 +34,7 @@ However, it should be noted that **R** is used here as an interface to the under
 Stan itself can be run through `cmdstan` as a command-line program, but can also be used through interfaces with other common dynamic programming languages such as **Julia**, **Python**, and **MATLAB**, among others (for details about these alternative interfaces, see <https://mc-stan.org/>).
 
 
-## Getting Started
+# Getting Started
 
 This tutorial uses **Stan** version 2.18.2 and requires the following **R** packages
 ```{r load_libraries, warning=FALSE, message=FALSE}
@@ -95,7 +98,7 @@ We can look at the output with:
 summary(fit_lmer)
 ```
 
-### Stan
+# Stan
 
 Now we describe how to fit the same model using Stan.
 A Stan program is made up of blocks, like a `data {}`, `parameters {}` and a `model {}` block.
@@ -331,7 +334,7 @@ fit_brm <- brm(Y ~ 1 + M_sq + lnR + M * lnR + lnVS + (1|EQID),data = data_regres
 summary(fit_brm)
 ```
 
-## More Complicated Models
+# More Complicated Models
 
 An obvious extension to the simple model is to include a random systematic effect for stations, and to make the near-fault-saturation term, $h$, a parameter of the model.
 Estimating $h$ makes the model nonlinear, so we cannot use the fully vectorized model anymore.
@@ -426,7 +429,7 @@ model {}
 
 Since `a` and `b` are typically hard to estimate from data, they should be given informative priors.
 
-# Correlated Random Effects
+## Correlated Random Effects
 
 Below, we show an example of how one could model multiple random effects for the same level.
 We assume that for each event, there is an event-specific near-fault-saturation term, which is distributed around a mean function $a \exp (b M)$, i.e.
@@ -1336,8 +1339,304 @@ model {
   }
 }
 ```
+## Different Data Likelihoods (Mixture Models)
 
+In most of the previous examples, the data was assumed to be distributed lognormally (or more precisely, the target variable was the logarithm of the ground-motion parameter of interest and was modeled as normally distributed).
+This is a general (and typically reasonable) assumption in the estimation of GMPEs.
+However, it is not necessary to use a normal data likelihood (coded as `Y ~ normal(mu,sigma);`).
+We have already seen how the normal distribution can be replaced with a Student-_t_ distribution.
+One can also use other distributions.
+For example, in some hazard studies (SWUS, Hanford) the ground-motion distribution is modeled as a mixture of two normal distributions (more accurately, a branch in the logic tree for the standard deviation contains the mixture distribution).
+Typically, the components of the mixture distribution (weights and standard deviations) are estimated from residuals, but it raises the question whether the coefficients of a GMPE would be different if a mixture model is used in the estimation.
+This can be done in Stan, though the implementation is a bit more complicated than what has been used previously.
+
+Similarly, he mixture model can be used to combine different GMPEs into a single model as in [@Haendel2014].
+
+A GMPE mixture model as used in SWUS and Hanford has the form
+$$
+Y = f(M,R,\ldots) + \delta B + \delta S + \delta WS \\
+\delta B \sim \mathcal N(0,\tau) \\
+\delta S \sim \mathcal N(0,\phi_{S2S}) \\
+\delta WS \sim \mathcal w_1 N(0,\phi_{SS,1}) + w_2 \mathcal N(0,\phi_{SS,2}) \\
+w_1 + w_2 = 1
+$$
+where $w_1$ and $w_2$ are the weights for the mixture components, and $\phi_{SS,1}$ and $\phi_{SS,2}$ are the standard deviations (we follow the SWUS and Hanford project and assume that the mean of the two normal distributions is zero, but in general that does not have to be the case).
+One could easily generalize this formulation to include more components for the mixture distribution.
+
+Mixture models are in general difficult to estimate via MCMC, since they are not identifiable (one could swap the indices of $w$ and $\phi_{SS}$ and end up with the same lkelihood), which means that different chains can have swapped estimated parameters, even though they have converged.
+Sometimes, his can happen within a chain.
+
+A generative model to sample from a mixture model would be to sample an index (in this case 1 or 2) with weights `wt`, and then sample from the component of the mixture with the sampled index.
+This approach cannot be used in the implementation as a forward model in Stan, because Stan cannot sample from integer distributions.
+Instead, the mixture proportions need to be integrated out
+
+To implement the mixture model in Stan, we need to declare the two standard deviations as well as the weights.
+The weights are declared as `simplex[2] wt;` -- this declares `wt` as a vector of length 2 with the constraint that the components sum up to one.
+In the model, we do not specify a prior distribuion for the weights, in which case Stan automatically assings a uniform prior over the declared range (in this case from zero to one).
+
+In the likelihood, the log-probability is incremented by the sum of the log probabilities of the two components.
+The density of the mixture has form
+$$
+p(y|w_1,w_2,\mu,\phi_{SS,1},\phi_{SS,2}) = w_1 \mbox{normal}(y|\mu,\phi_{SS,1}) + w_2 \mbox{normal}(y|\mu,\phi_{SS,2})
+$$
+where $\mu = f(M,R,\ldots) + \delta B + \delta S$ (in the formulation above, both mixture components have the same median).
+The log-probability in the mixture model in Stan is incremented by the logarithm of this density.
+It makes use of the function `log_sum_exp`, which is defined as `log_sum_exp(a,b) = log(exp(a) + exp(b))`.
+
+
+```{stan, output.var="gmm_mixture"}
+data {
+  int<lower=1> N; // number of records
+  int<lower=1> NEQ; // number of earthquakes
+  int<lower=1> NSTAT; // number of earthquakes
+  
+  vector[N] M; // magnitudes
+  vector[N] R; // distances
+  vector[N] VS; // Vs30 values
+  vector[N] Y; // ln PGA values
+  
+  int<lower=1,upper=NEQ> idx_eq[N];
+  int<lower=1,upper=NSTAT> idx_stat[N];
+}
+
+transformed data {
+  real vref = 760;
+}
+
+parameters {
+  real theta1;
+  real theta2;
+  real theta3;
+  real theta4;
+  real theta5;
+  real theta6;
+  real theta7;
+  
+  real<lower=0> h;
+  
+  real<lower=0> phiSS_1;
+  real<lower=0> phiSS_2;
+  real<lower=0> tau;
+  real<lower=0> phiS2S;
+  
+  vector[NEQ] deltaB;
+  vector[NSTAT] deltaS;
+  
+  simplex[2] wt;
+}
+
+model {
+  vector[N] mu;
+
+  theta1 ~ normal(0,10);
+  theta2 ~ normal(0,10);
+  theta3 ~ normal(0,10);
+  theta4 ~ normal(0,10);
+  theta5 ~ normal(0,10);
+  theta6 ~ normal(0,10);
+  theta7 ~ normal(0,10);
+  h ~ normal(6,4);
+  
+  phiSS_1 ~ cauchy(0,0.5);
+  phiSS_2 ~ cauchy(0,0.5);
+  phiS2S ~ cauchy(0,0.5);
+  tau ~ cauchy(0,0.5);
+  
+  deltaB ~ normal(0,tau);
+  deltaS ~ normal(0,phiS2S);
+  
+  for(i in 1:N) {
+    mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
+    
+    target += log_sum_exp(log(wt[1]) + normal_lpdf(Y[i] | mu[i], phiSS_1), log(wt[2]) + normal_lpdf(Y[i] | mu[i], phiSS_2));
+  }
+}
+```
+
+
+## Custom Data Likelihoods
+
+In the previous section, we have replaced the normal distribution with a mixture of two normal distributions as the likelihood of the record level (for robust regression, we had used the Student-_t_ distribution).
+One could also use a different distribution; for example, [@Bullock2019] remarked that a loglogistic distribution might be more ``conservative'' than the lognormal distribution in PSHA, which again raises the question whether coefficients estimated would be different.
+
+To implement a model with a loglogistic likelihood at the record level, we need to specify the density of the distribution first, which is done in the optional `functions` block.
+Then, the log-probability needs to be incremented by the value of the density.
+
+The density of the loglogistic distribution is
+$$
+p(y) = \frac{(\beta/\alpha) (y/\alpha)^{\beta-1}}{(1 + (y/\alpha)^\beta)^2}
+$$
+where the median is $\alpha$ and the standard deviation is $1/\beta$.
+This function is implemented before the main Stan program, and then used in the model block to increment the log-probability.
+Note that the loglogistic distribution is a distribution for the absolute GM values, not the logarithmic ones.
+
+```{stan, output.var="gmm_loglogistic"}
+functions {
+  real loglogistic(real x, real alpha, real beta) {
+      return (beta / alpha) * (x / alpha)^(beta - 1) / (1 + (x / alpha)^beta)^2;
+  }
+}
+
+data {
+  int<lower=1> N; // number of records
+  int<lower=1> NEQ; // number of earthquakes
+  int<lower=1> NSTAT; // number of earthquakes
+  
+  vector[N] M; // magnitudes
+  vector[N] R; // distances
+  vector[N] VS; // Vs30 values
+  vector[N] Y; // ln PGA values
+  
+  int<lower=1,upper=NEQ> idx_eq[N];
+  int<lower=1,upper=NSTAT> idx_stat[N];
+}
+
+transformed data {
+  real vref = 760;
+  vector[N] Y_exp;
+  
+  Y_exp = exp(Y);
+}
+
+parameters {
+  real theta1;
+  real theta2;
+  real theta3;
+  real theta4;
+  real theta5;
+  real theta6;
+  real theta7;
+  
+  real<lower=0> h;
+  
+  real<lower=0> phiSS;
+  real<lower=0> tau;
+  real<lower=0> phiS2S;
+  
+  vector[NEQ] deltaB;
+  vector[NSTAT] deltaS;
+  
+  simplex[2] wt;
+}
+
+model {
+  vector[N] mu;
+
+  theta1 ~ normal(0,10);
+  theta2 ~ normal(0,10);
+  theta3 ~ normal(0,10);
+  theta4 ~ normal(0,10);
+  theta5 ~ normal(0,10);
+  theta6 ~ normal(0,10);
+  theta7 ~ normal(0,10);
+  h ~ normal(6,4);
+  
+  phiSS ~ cauchy(0,0.5);
+  phiS2S ~ cauchy(0,0.5);
+  tau ~ cauchy(0,0.5);
+  
+  deltaB ~ normal(0,tau);
+  deltaS ~ normal(0,phiS2S);
+  
+  for(i in 1:N) {
+    mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
+    
+    target += log(loglogistic(Y_exp[i], exp(mu[i]), 1/phiSS));
+  }
+}
+```
+
+# Prediction
+
+So far, we showed different models that can be fit using Stan.
+It is possible to use Stan to make predictions as well.
+This can be done in an optional `generated quantities` block.
+In this block, the current sample of each parameter is used, withut any effect on the posterior.
+There are two ways one can make use of the `generated quantities` block -- during fitting, and for pure prediction.
+
+Below, we show one can calculate median predictions for a simple model (not a GMM).
+Evry variable that is defined in the `generated quantities` block shows up in the samples like a parameter, so this generates a list of median predictions for all samples of the posterior distribution.
+The generated `quantities block` can also be used to calculate residuals or log-likelihood values (which can be used with package `loo` for model comparison).
+
+``` {stan, output.var = "median_prediction"}
+data {
+  int<lower=1> N;
+  vector[N] X;
+  vector[N] Y;
+}
+
+parameters {
+  real alpha;
+  real beta;
+  real<lower=0> sigma;
+}
+
+model {
+  alpha ~ normal(0,10);
+  beta ~ normal(0,10);
+  sigma ~ cauchy(0,10);
+  Y ~ normal(alpha + beta * X,sigma);
+}
+
+generated quantities {
+  vector[N] mu;
+  
+  mu = alpha + beta * X;
+}
+```
+
+
+It is easy to change the above code to also calculate predictions for new `X` values - one just declares a new variable `X_pred` as data, together with its length `N_pred`, and changes the variable used in the `generated quantities` block.
+It would be inefficient to fit the same model every time one wants to calculate new predictions.
+Instead, one can write a program where the variables are given as data, and the model block is empty, as shown below.
+
+``` {stan, output.var = "prediction_gq"}
+data {
+  int<lower=1> N;
+  int<lower=1> N_samples;
+  vector[N] X_pred;
+  
+  vector[N_samples] alpha;
+  vector[N_samples] beta;
+}
+
+parameters {
+}
+
+model {
+}
+
+generated quantities {
+  matrix[N_samples,N] mu;
+  
+  for(i in 1:N_samples)
+    mu[i] = (alpha + beta * X_pred)';
+}
+```
+
+Here, the input are a bunch of samples for the parameters (e.g. from the posterior distribution).
+The predictions are stored in a matrix.
+Since the $i$th row of matrix `mu` is a `row_vector`, we need to transpose the vectorized statement `alpha + beta * X_pred`.
+Alternatively, we could have also used the declaration `row_vector[N] X_pred`.
+
+Since the Stan program above contains an empty model block, it needs to be run with `algorithm = "Fixed_param"`.
+
+```{r eval=FALSE}
+
+pred <- stan('predict.stan',
+             data = data_pred,
+             chains = 1,
+             iter = 1,
+             algorithm = "Fixed_param"
+             )
+
+```
+
+Alternatively, one can of course also write a function directly in **R** (or **python** and so on) that calculates predictions for any given parametere values and predictor variables.
+
+# R Session Info
 
 ```{r session_info, include=TRUE, echo=TRUE, results='markup'}
 devtools::session_info()
 ```
+# References
