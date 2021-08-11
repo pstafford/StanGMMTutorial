@@ -1,0 +1,239 @@
+---
+title: "GMM Estimation Using Stan - Tutorial"
+author: "Nicolas Kuehn and Peter Stafford"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    keep_md: true
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    highlight: tango
+  pdf_document: default
+bibliography: references.bib
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width=12,fig.height = 8, fig.path = 'pictures/',
+root.dir = '/Users/nico/GROUNDMOTION/PROJECTS/STAN_Tutorial/Git/StanGMMTutorial')
+```
+
+# Introduction
+
+This is a tutorial on how to use the program Stan (<https://mc-stan.org/>) to estimate the parameters of a ground-motion model (GMM).
+Stan is a program that uses Bayesian inference to estimate the parameters of a model via Markov Chain Monte Carlo (MCMC) sampling.
+
+In this tutorial, we estimate parameters of a GMM used in Kuehn and Stafford.
+A list of Sta programs covering a wide variety of GMMs is available in the other markdown file.
+
+# Getting Started
+
+This tutorial uses **Stan** version 2.24.1 and requires the following **R** packages
+```{r load_libraries, warning=FALSE, message=FALSE}
+# load required packages
+library(lme4)
+library(cmdstanr)
+library(posterior)
+library(bayesplot)
+
+options(mc.cores = parallel::detectCores())
+```
+
+``` {r package_options, echo=FALSE}
+register_knitr_engine(override = TRUE)
+```
+
+First, we define the color scheme for the bayesplot package, and tell the cmdStanR package where to find cmdStan.
+
+```{r set_options, results = FALSE, message=FALSE}
+color_scheme_set("brightblue")
+
+set_cmdstan_path('/Users/nico/GROUNDMOTION/SOFTWARE/cmdstan-2.24.1')
+cmdstan_path()
+cmdstan_version()
+```
+
+Next, we simulate some data.
+Here, we have 50 events and 20 stations.
+Each event is recorded at all 20 stations.
+Events are randomly assigned a magnitude between 4 and 8, and an event term, sampled from a normal distribution with mea zero and standard deviation $\tau$.
+Similarly, the $V_{S30}$ and station terms are randomly sampled for each station.
+Then, for each event/station par, a distance is sampled, and the median PSA is calculated according to
+$$y = c_1 + c_2 M + c_3 (8 - M)^2 + (c_4 + c_5 M) \ln \left[ R_{RUP} + h \right] + c_6 R_{RUP} + c_7 \ln \frac{V_{S30}}{400} + \delta B + \delta S + \delta WS$$
+
+```{r simulate_data}
+## simulate data
+tau <- 0.5;
+phiSS <- 0.5;
+phiS2S <- 0.4;
+
+neq <- 50;
+nstat <- 20;
+
+### determine M, event term and observed magnitude
+dataM <- matrix(nrow = neq,ncol=2);
+set.seed(5618);
+for(i in 1:neq) {
+  mag <- round(runif(1,4,8),2);
+  eta <- rnorm(1,0,tau);
+  dataM[i,] <- c(mag,eta);
+}
+
+### determine VS, station term and observed VS
+dataV <- matrix(nrow = nstat,ncol=2);
+set.seed(8472);
+for(i in 1:nstat) {
+  vs <- round(runif(1,log(300),log(1000)),2);
+  lambda <- rnorm(1,0,phiS2S);
+  dataV[i,] <- c(vs - log(400),lambda);
+}
+
+nrec <- nstat;
+data <- matrix(nrow=neq * nrec,ncol = 7);
+data_x <- matrix(nrow = neq * nrec, ncol = 7)
+data_y <- vector(length = neq * nrec)
+
+
+h <- 6
+coeffs <- c(10.925, -0.985, -0.245, -3.245, 0.32, -0.008, -0.5)
+
+set.seed(98765);
+k <- 1
+for(i in 1:neq) {
+  idx <- 1:nstat;
+  mag <- dataM[i,1];
+  eqt <- dataM[i,2];
+  for(j in 1:nrec) {
+    dist <- round(runif(1,1,200),2);
+    epsilon <- rnorm(1,0,phiSS);
+    
+    vs <- dataV[idx[j],1];
+    
+    disteff <- dist + h;
+    data_x[k,] <- c(1, mag, (8 - mag)^2, log(disteff), mag * log(disteff), dist, vs);
+    pga <- coeffs %*% data_x[k,]
+    pga2 <- pga + epsilon + eqt + dataV[idx[j],2];
+    data_y[k] <- pga2;
+    data[k,] <- c(mag,dist,vs,pga,pga2,i,idx[j]);
+    k <- k+1;
+  }
+}
+```
+
+
+First, we fit a linear model using `lmer`, from the **R** package **lme4** [@Bates2015], to the data.
+The package **lme4** is the successor to the package **nlme** and together these packages have been used quite extensively for the purposes of calibrating ground-motion models in the past.
+These packages use more traditional maximum-likelihood based techniques with efficient numerical strategies to fit models. 
+They are computationally very efficient, but also have limitations with regard to what type of models can be fit. 
+To make our GMM linear, we have to fix the parameter `h` (often referred to as pseudo-depth of near-fault-saturation-term).
+In this example, we fix it to `h = 6`, which is the value used to generate the data.
+
+``` {r lmer}
+eqid = data[,6]
+statid = data[,7]
+M <- data_x[,2]
+M2 <- data_x[,3]
+lnR <- data_x[,4]
+MlnR <- data_x[,5]
+R <- data_x[,6]
+VS <- data_x[,7]
+Y <- data_y
+
+fit_lmer <- lmer(Y ~ 1 + M + M2 + lnR + MlnR + R + VS + (1 | eqid) + (1 | statid))
+coeffs_lmer <- fixef(fit_lmer)
+summary(fit_lmer)
+```
+
+# Stan
+
+Now we describe how to fit the same model using Stan.
+A Stan program is made up of blocks, like a `data {}`, `parameters {}` and a `model {}` block.
+These are used to declare the data, the parameters to be estimated, and a generative model for the data.
+A declaration of a variable will look like `real a;` to declare a variable `a` that is a real, or `vector[N] Y;` to declare a vector of length `N`.
+Stan is typed, so there is a difference between a declaration `real a;` or `int a;`.
+Constraints can be declared as `real<lower=L,upper=U> a;`, which means that `a` can take only values `L <= a <= U`.
+Each line in a stan program has to end in `;`.
+
+``` {r stan_model}
+file <- file.path('STAN', 'gmm.stan')
+mod <- cmdstan_model(file)
+
+mod$print()
+```
+
+Next, we declare the data for the Stan program, and run the sampler.
+
+``` {r run_stan}
+data_list <- list(N = length(data_y),
+                  N_eq = neq,
+                  N_stat = nstat,
+                  K = 7,
+                  X = data_x,
+                  Y = data_y,
+                  idx_eq = eqid,
+                  idx_stat = statid
+)
+
+fit <- mod$sample(
+  data = data_list,
+  seed = 123,
+  chains = 2,
+  iter_sampling = 1000,
+  iter_warmup = 1000,
+  refresh = 500,
+  max_treedepth = 12
+)
+```
+
+The output of running `mod$sample()` is a `CmdStanMCMC`.
+We can use the associated `print` method to get a summary of the fit.
+
+``` {r print_stan_fit}
+fit$print(variables = c('c','phi_SS', 'tau', 'phi_S2S'))
+```
+
+As we can see, the Rhat values are all close to one, indicating good convergence of the chains.
+Below, we plot trace plots of the chains for the standard deviation parameters.
+
+``` {r stan_fit_trace}
+posterior <- fit$draws()
+mcmc_trace(posterior, regex_pars = c("phi_SS", "tau", "phi_S2S")) +
+  xaxis_title(size = 30, family = "sans") + 
+  yaxis_title(size = 30, family = "sans")
+```
+
+Histograms of the parameters show the uncertainty associaed with each parameter.
+
+```{r posterior_hist}
+mcmc_hist(posterior, regex_pars = c("c")) +
+  xaxis_title(size = 30, family = "sans") + 
+  yaxis_title(size = 30, family = "sans")
+
+mcmc_hist(posterior, regex_pars = c("phi_SS", "tau", "phi_S2S")) +
+  xaxis_title(size = 30, family = "sans") + 
+  yaxis_title(size = 30, family = "sans")
+```
+
+```{r posterior_intervals}
+mcmc_intervals(posterior, regex_pars = c("phi_SS", "tau", "phi_S2S")) +
+  xaxis_text(size = 30, family = "sans") + 
+  yaxis_text(size = 30, family = "sans") +
+  grid_lines(color = "gray60")
+
+mcmc_areas(posterior,
+           regex_pars = c("phi_SS", "tau", "phi_S2S"),
+           prob = 0.8,
+           prob_outer = 0.99) +
+  xaxis_text(size = 30, family = "sans") + 
+  yaxis_text(size = 30, family = "sans") +
+  grid_lines(color = "gray60")
+```
+
+```{r posterior_intervals_deltaS}
+mcmc_intervals(posterior, regex_pars = c("deltaS"),
+               prob = 0.84, prob_outer = 0.95) +
+  xaxis_text(size = 30, family = "sans") + 
+  yaxis_text(size = 30, family = "sans") +
+  grid_lines(color = "gray60")
+```

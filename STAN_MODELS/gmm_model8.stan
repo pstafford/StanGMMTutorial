@@ -10,9 +10,6 @@ data {
   
   int<lower=1,upper=NEQ> idx_eq[N];
   int<lower=1,upper=NSTAT> idx_stat[N];
-  
-  matrix[N,N] distanceMatrix; // inter-station distance matrix (for all records across all events)
-  int<lower=1,upper=NEQ> ObsPerEvent[NEQ];
 }
 
 transformed data {
@@ -30,14 +27,15 @@ parameters {
   
   real<lower=0> h;
   
-  real<lower=0> phiSS;
+  real<lower=0> phiSS_1;
+  real<lower=0> phiSS_2;
   real<lower=0> tau;
   real<lower=0> phiS2S;
   
   vector[NEQ] deltaB;
   vector[NSTAT] deltaS;
-
-  real<lower=0> correlationLength;
+  
+  simplex[2] wt;
 }
 
 model {
@@ -52,32 +50,17 @@ model {
   theta7 ~ normal(0,10);
   h ~ normal(6,4);
   
-  phiSS ~ cauchy(0,0.5);
+  phiSS_1 ~ cauchy(0,0.5);
+  phiSS_2 ~ cauchy(0,0.5);
   phiS2S ~ cauchy(0,0.5);
   tau ~ cauchy(0,0.5);
   
   deltaB ~ normal(0,tau);
   deltaS ~ normal(0,phiS2S);
   
-  correlationLength ~ cauchy(5,1);
-
   for(i in 1:N) {
     mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
-  }
-
-  {
-    int epos;
-    epos = 1;
-    for ( i in 1:NEQ ) {
-      if ( ObsPerEvent[i] > 1 ) {
-        vector[ObsPerEvent[i]] eventMu = segment(mu, epos, ObsPerEvent[i]);
-        matrix[ObsPerEvent[i],ObsPerEvent[i]] eventLCov = phiSS * cholesky_decompose( exp( -block(distanceMatrix, epos, epos, ObsPerEvent[i], ObsPerEvent[i] ) / correlationLength ) );
-        segment(Y, epos, ObsPerEvent[i]) ~ multi_normal_cholesky( eventMu, eventLCov );
-      } else {
-        real eventMu = mu[epos];
-        Y[epos] ~ normal( eventMu, phiSS );
-      }
-      epos = epos + ObsPerEvent[i];
-    }
+    
+    target += log_sum_exp(log(wt[1]) + normal_lpdf(Y[i] | mu[i], phiSS_1), log(wt[2]) + normal_lpdf(Y[i] | mu[i], phiSS_2));
   }
 }
