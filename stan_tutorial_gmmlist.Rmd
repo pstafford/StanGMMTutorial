@@ -10,7 +10,7 @@ output:
     number_sections: true
     highlight: tango
   pdf_document: default
-bibliography: references2.bib
+bibliography: references.bib
 ---
 
 
@@ -31,7 +31,7 @@ This tutorial uses **Stan** version 2.24.1.
 library(cmdstanr)
 
 register_knitr_engine(override = TRUE)
-set_cmdstan_path('/Users/nico/GROUNDMOTION/SOFTWARE/cmdstan-2.24.1')
+set_cmdstan_path('/Users/nico/GROUNDMOTION/SOFTWARE/cmdstan-2.27.0')
 cmdstan_path()
 cmdstan_version()
 ```
@@ -246,7 +246,7 @@ mod$print()
 Over the last few years it has been recognized that the ergodic assumption [@Anderson1999] (that the ground-motion distribution at a site over time is the same as the ground-motion distribution over space) can lead to biased hazard results.
 With an increasing amount of data in different regions, the ergodic assumption can be relaxed.
 An intermediate step towards fully nonergodic models are partially nonergodic models (though one can argue that models that account for systematic station terms $\delta S$ are already partially nonergodic) in which some of the parameters are different for different regions.
-Often, the constant, anelastic attenuation coefficient, and the site-scaling coefficient are regionally dependent [@Stafford2014,@Kotha2016,@Sedaghati2017,@Kuehn2016].
+Often, the constant, anelastic attenuation coefficient, and the site-scaling coefficient are regionally dependent [@Stafford2014; @Kotha2016; @Kuehn2016; @Sedaghati2017].
 It makes sense to model these as regional random effects, since in that case the coefficient for regions with a smaller amount of data are automatically associated with larger uncertainty (in the Bayesian case, a wider posterior distribution).
 Typically, one assumes that the regional random effects are distributed according to a normal distribution, where the regional coefficients are samples from a global coefficient (_e.g._, for the constant $\theta_1$)
 $$
