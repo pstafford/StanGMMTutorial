@@ -1,7 +1,7 @@
 ---
 title: "GMM Estimation Using Stan - Tutorial and List of Models"
 author: "Nicolas Kuehn and Peter Stafford"
-date: "03 November, 2020"
+date: "12 August, 2021"
 output:
   html_document:
     keep_md: true
@@ -10,7 +10,7 @@ output:
     number_sections: true
     highlight: tango
   pdf_document: default
-bibliography: references2.bib
+bibliography: references.bib
 ---
 
 
@@ -25,11 +25,11 @@ This is a list of Stan models for GMM development.
 This tutorial uses **Stan** version 2.24.1.
 
 ```
-## [1] "/Users/nico/GROUNDMOTION/SOFTWARE/cmdstan-2.24.1"
+## [1] "/Users/nico/GROUNDMOTION/SOFTWARE/cmdstan-2.27.0"
 ```
 
 ```
-## [1] "2.24.1"
+## [1] "2.27.0"
 ```
 
 
@@ -349,7 +349,7 @@ This is useful when dealing with missing or uncertain values of the predictor va
 ## }
 ## 
 ## transformed data {
-##   real vref = 760;
+##   real vref = 400;
 ## }
 ## 
 ## parameters {
@@ -548,7 +548,7 @@ First, we just add a new variable for this term to the model.
 ## }
 ## 
 ## transformed data {
-##   real vref = 760;
+##   real vref = 400;
 ## }
 ## 
 ## parameters {
@@ -626,7 +626,7 @@ These are combined into the covariance matrix via `Sigma_eq = quad_form_diag(C_e
 ## }
 ## 
 ## transformed data {
-##   real vref = 760;
+##   real vref = 400;
 ##   vector[2] mu_eq;
 ##   
 ##   for(i in 1:2)
@@ -707,7 +707,7 @@ The Cholesky factor of the covariance is calculated by `diag_pre_multiply(tau, L
 ## }
 ## 
 ## transformed data {
-##   real vref = 760;
+##   real vref = 400;
 ##   vector[2] mu_eq;
 ##   
 ##   for(i in 1:2)
@@ -777,7 +777,7 @@ The Cholesky factor of the covariance is calculated by `diag_pre_multiply(tau, L
 Over the last few years it has been recognized that the ergodic assumption [@Anderson1999] (that the ground-motion distribution at a site over time is the same as the ground-motion distribution over space) can lead to biased hazard results.
 With an increasing amount of data in different regions, the ergodic assumption can be relaxed.
 An intermediate step towards fully nonergodic models are partially nonergodic models (though one can argue that models that account for systematic station terms $\delta S$ are already partially nonergodic) in which some of the parameters are different for different regions.
-Often, the constant, anelastic attenuation coefficient, and the site-scaling coefficient are regionally dependent [@Stafford2014,@Kotha2016,@Sedaghati2017,@Kuehn2016].
+Often, the constant, anelastic attenuation coefficient, and the site-scaling coefficient are regionally dependent [@Stafford2014; @Kotha2016; @Kuehn2016; @Sedaghati2017].
 It makes sense to model these as regional random effects, since in that case the coefficient for regions with a smaller amount of data are automatically associated with larger uncertainty (in the Bayesian case, a wider posterior distribution).
 Typically, one assumes that the regional random effects are distributed according to a normal distribution, where the regional coefficients are samples from a global coefficient (_e.g._, for the constant $\theta_1$)
 $$
@@ -811,7 +811,7 @@ Imposing the constraint ensures that this does not happen.
 ## }
 ## 
 ## transformed data {
-##   real vref = 760;
+##   real vref = 400;
 ## }
 ## 
 ## parameters {
@@ -910,7 +910,7 @@ One can also model the regional parameters as correlated, similar to he model wi
 ## }
 ## 
 ## transformed data {
-##   real vref = 760;
+##   real vref = 400;
 ## }
 ## 
 ## parameters {
@@ -1793,7 +1793,7 @@ In order for this approach to work, the observations need to be sorted so that t
 ##   deltaS ~ normal(0,phiS2S);
 ##   
 ##   for(i in 1:N) {
-##     mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
+##     mu[i] = theta1 + theta2 * M[i] + theta3 * square(8 - M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
 ##   }
 ## 
 ##   {
@@ -1866,7 +1866,7 @@ That said, region-specific studies where separation distances among stations are
 ##   
 ##   real<lower=0> phiSS;
 ##   real<lower=0> tau;
-##   real<lower=0> phiS2S;
+##   real<lower=0> phiS2S_0;
 ##   
 ##   vector[NEQ] deltaB;
 ##   vector[NSTAT] deltaS;
@@ -1887,16 +1887,16 @@ That said, region-specific studies where separation distances among stations are
 ##   h ~ normal(6,4);
 ##   
 ##   phiSS ~ cauchy(0,0.5);
-##   phiS2S ~ cauchy(0,0.5);
+##   phiS2S_0 ~ cauchy(0,0.5);
 ##   tau ~ cauchy(0,0.5);
 ##   
 ##   deltaB ~ normal(0,tau);
-##   deltaS ~ normal(0,phiS2S);
+##   deltaS ~ normal(0,phiS2S_0);
 ##   
 ##   correlationLength ~ cauchy(5,1);
 ## 
 ##   for(i in 1:N) {
-##     mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
+##     mu[i] = theta1 + theta2 * M[i] + theta3 * square(8 - M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
 ##   }
 ## 
 ##   {
@@ -1987,7 +1987,7 @@ Note that to avoid numerical instabilities, we add a small jitter `delta = 1e-9`
 ##   
 ##   real<lower=0> phiSS;
 ##   real<lower=0> tau;
-##   real<lower=0> phiS2S;
+##   real<lower=0> phiS2S_0;
 ## 
 ##   real<lower=0> rho_stat; // length scale of spatial correlation for station terms
 ##   real<lower=0> theta_stat; // standard deviation of spatial correlation for station terms
@@ -2012,14 +2012,16 @@ Note that to avoid numerical instabilities, we add a small jitter `delta = 1e-9`
 ##   h ~ normal(6,4);
 ##   
 ##   phiSS ~ cauchy(0,0.5);
-##   phiS2S ~ cauchy(0,0.5);
+##   phiS2S_0 ~ cauchy(0,0.5);
 ##   tau ~ cauchy(0,0.5);
 ## 
 ##   rho_stat ~ inv_gamma(2.5,0.1);
 ##   theta_stat ~ exponential(20);
+## 
+##   z_stat ~ std_normal();
 ##   
 ##   deltaB ~ normal(0,tau);
-##   deltaS ~ normal(0,phiS2S);
+##   deltaS ~ normal(0,phiS2S_0);
 ## 
 ##   // latent variable station contributions to GP
 ##   {

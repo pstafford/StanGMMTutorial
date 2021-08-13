@@ -1,7 +1,7 @@
 ---
 title: "GMM Estimation Using Stan - Tutorial"
 author: "Nicolas Kuehn and Peter Stafford"
-date: "25 September, 2020"
+date: "13 August, 2021"
 output:
   html_document:
     keep_md: true
@@ -10,7 +10,7 @@ output:
     number_sections: true
     highlight: tango
   pdf_document: default
-bibliography: references.bib
+bibliography: REF/references.bib
 ---
 
 
@@ -21,12 +21,16 @@ bibliography: references.bib
 This is a tutorial on how to use the program Stan (<https://mc-stan.org/>) to estimate the parameters of a ground-motion model (GMM).
 Stan is a program that uses Bayesian inference to estimate the parameters of a model via Markov Chain Monte Carlo (MCMC) sampling.
 
-In this tutorial, we estimate parameters of a GMM used in Kuehn and Stafford.
-A list of Sta programs covering a wide variety of GMMs is available in the other markdown file.
+In this tutorial, we estimate parameters of a GMM used as an example in Kuehn and Stafford.
+A list of Stan programs covering a wide variety of GMMs is available in the other markdown file.
+We will use he package `cmdstanR` to estimate the model parameters, sine it is a lightweight package that allows to use the lates Stan version.
+We cover the basics of running the model and extracting parameters/posterior distributions, and looking at graphical summaries.
+For more info and installation instructions, see <https://mc-stan.org/cmdstanr/> and the vignette <https://mc-stan.org/cmdstanr/articles/cmdstanr.html>.
+For the use of the package Rstan, see <https://mc-stan.org/rstan/>.
 
 # Getting Started
 
-This tutorial uses **Stan** version 2.24.1 and requires the following **R** packages
+This tutorial uses **Stan** version 2.27.0 and requires the following **R** packages.
 
 ```r
 # load required packages
@@ -34,6 +38,7 @@ library(lme4)
 library(cmdstanr)
 library(posterior)
 library(bayesplot)
+library(ggplot2)
 
 options(mc.cores = parallel::detectCores())
 ```
@@ -46,7 +51,7 @@ First, we define the color scheme for the bayesplot package, and tell the cmdSta
 ```r
 color_scheme_set("brightblue")
 
-set_cmdstan_path('/Users/nico/GROUNDMOTION/SOFTWARE/cmdstan-2.24.1')
+set_cmdstan_path('/Users/nico/GROUNDMOTION/SOFTWARE/cmdstan-2.27.0') # replace with Path 
 cmdstan_path()
 cmdstan_version()
 ```
@@ -191,6 +196,9 @@ Stan is typed, so there is a difference between a declaration `real a;` or `int 
 Constraints can be declared as `real<lower=L,upper=U> a;`, which means that `a` can take only values `L <= a <= U`.
 Each line in a stan program has to end in `;`.
 
+Below, we load a Stan model from file `STAN/gmm.stan`.
+It is compiled with `mod <- cmdstan_model(file)`, which returns a `CmdStanModel` object, which can be used to access information about the model, and provides methods to for fitting the model. 
+
 
 ```r
 file <- file.path('STAN', 'gmm.stan')
@@ -244,7 +252,13 @@ mod$print()
 ##   }
 ```
 
+## cmdstanR
+
 Next, we declare the data for the Stan program, and run the sampler.
+All parameters declared in the `data {}` block are defined as a named list in **R**.
+Then, the `$sample()` method is used to call the MCMC sampler.
+There are options that allow one to control the sampling process, such as setting the number of chains to run, the number of warm-up samples and post-warmup samples, and others.
+For a full list of options, see <https://mc-stan.org/cmdstanr/reference/model-method-sample.html>.
 
 
 ```r
@@ -261,7 +275,7 @@ data_list <- list(N = length(data_y),
 fit <- mod$sample(
   data = data_list,
   seed = 123,
-  chains = 2,
+  chains = 4,
   iter_sampling = 1000,
   iter_warmup = 1000,
   refresh = 500,
@@ -270,7 +284,7 @@ fit <- mod$sample(
 ```
 
 ```
-## Running MCMC with 2 chains, at most 4 in parallel...
+## Running MCMC with 4 parallel chains...
 ## 
 ## Chain 1 Iteration:    1 / 2000 [  0%]  (Warmup)
 ```
@@ -280,7 +294,7 @@ fit <- mod$sample(
 ```
 
 ```
-## Chain 1 Exception: normal_lpdf: Scale parameter is 0, but must be > 0! (in '/var/folders/p3/r7vrsk6n2d15709vgcky_y880000gn/T/Rtmp8pWeRx/model-ee4a600539.stan', line 32, column 4 to column 27)
+## Chain 1 Exception: normal_lpdf: Scale parameter is 0, but must be positive! (in '/var/folders/p3/r7vrsk6n2d15709vgcky_y880000gn/T/Rtmpp63mtu/model-200431ce3d4a.stan', line 32, column 4 to column 27)
 ```
 
 ```
@@ -304,7 +318,7 @@ fit <- mod$sample(
 ```
 
 ```
-## Chain 2 Exception: normal_lpdf: Scale parameter is 0, but must be > 0! (in '/var/folders/p3/r7vrsk6n2d15709vgcky_y880000gn/T/Rtmp8pWeRx/model-ee4a600539.stan', line 32, column 4 to column 27)
+## Chain 2 Exception: normal_lpdf: Scale parameter is 0, but must be positive! (in '/var/folders/p3/r7vrsk6n2d15709vgcky_y880000gn/T/Rtmpp63mtu/model-200431ce3d4a.stan', line 32, column 4 to column 27)
 ```
 
 ```
@@ -320,26 +334,180 @@ fit <- mod$sample(
 ```
 
 ```
-## Chain 1 Iteration:  500 / 2000 [ 25%]  (Warmup) 
+## Chain 3 Iteration:    1 / 2000 [  0%]  (Warmup) 
+## Chain 4 Iteration:    1 / 2000 [  0%]  (Warmup) 
+## Chain 4 Iteration:  500 / 2000 [ 25%]  (Warmup) 
+## Chain 3 Iteration:  500 / 2000 [ 25%]  (Warmup) 
 ## Chain 2 Iteration:  500 / 2000 [ 25%]  (Warmup) 
+## Chain 1 Iteration:  500 / 2000 [ 25%]  (Warmup) 
+## Chain 4 Iteration: 1000 / 2000 [ 50%]  (Warmup) 
+## Chain 4 Iteration: 1001 / 2000 [ 50%]  (Sampling) 
+## Chain 3 Iteration: 1000 / 2000 [ 50%]  (Warmup) 
+## Chain 3 Iteration: 1001 / 2000 [ 50%]  (Sampling) 
 ## Chain 1 Iteration: 1000 / 2000 [ 50%]  (Warmup) 
 ## Chain 1 Iteration: 1001 / 2000 [ 50%]  (Sampling) 
 ## Chain 2 Iteration: 1000 / 2000 [ 50%]  (Warmup) 
 ## Chain 2 Iteration: 1001 / 2000 [ 50%]  (Sampling) 
-## Chain 1 Iteration: 1500 / 2000 [ 75%]  (Sampling) 
+## Chain 4 Iteration: 1500 / 2000 [ 75%]  (Sampling) 
+## Chain 3 Iteration: 1500 / 2000 [ 75%]  (Sampling) 
 ## Chain 2 Iteration: 1500 / 2000 [ 75%]  (Sampling) 
-## Chain 1 Iteration: 2000 / 2000 [100%]  (Sampling) 
-## Chain 1 finished in 180.2 seconds.
+## Chain 1 Iteration: 1500 / 2000 [ 75%]  (Sampling) 
+## Chain 4 Iteration: 2000 / 2000 [100%]  (Sampling) 
+## Chain 4 finished in 290.6 seconds.
+## Chain 3 Iteration: 2000 / 2000 [100%]  (Sampling) 
+## Chain 3 finished in 293.9 seconds.
 ## Chain 2 Iteration: 2000 / 2000 [100%]  (Sampling) 
-## Chain 2 finished in 180.3 seconds.
+## Chain 2 finished in 310.2 seconds.
+## Chain 1 Iteration: 2000 / 2000 [100%]  (Sampling) 
+## Chain 1 finished in 313.6 seconds.
 ## 
-## Both chains finished successfully.
-## Mean chain execution time: 180.2 seconds.
-## Total execution time: 180.4 seconds.
+## All 4 chains finished successfully.
+## Mean chain execution time: 302.1 seconds.
+## Total execution time: 313.8 seconds.
 ```
 
-The output of running `mod$sample()` is a `CmdStanMCMC`.
+
+### Assessing the Model Fit
+
+Next, we do some checks to see whether there were some problems with the fit.
+To understand wome of these diagnostices, see @Vehtari2020 (for Rhat) and @Betancourt2016 (for EBFMI (Energy Bayesian fraction of missing information)).
+
+
+```r
+fit$cmdstan_diagnose()
+```
+
+```
+## Processing csv files: /var/folders/p3/r7vrsk6n2d15709vgcky_y880000gn/T/RtmpbsH4qM/gmm-202108131220-1-807f05.csv, /var/folders/p3/r7vrsk6n2d15709vgcky_y880000gn/T/RtmpbsH4qM/gmm-202108131220-2-807f05.csv, /var/folders/p3/r7vrsk6n2d15709vgcky_y880000gn/T/RtmpbsH4qM/gmm-202108131220-3-807f05.csv, /var/folders/p3/r7vrsk6n2d15709vgcky_y880000gn/T/RtmpbsH4qM/gmm-202108131220-4-807f05.csv
+## 
+## Checking sampler transitions treedepth.
+## Treedepth satisfactory for all transitions.
+## 
+## Checking sampler transitions for divergences.
+## No divergent transitions found.
+## 
+## Checking E-BFMI - sampler transitions HMC potential energy.
+## E-BFMI satisfactory.
+## 
+## Effective sample size satisfactory.
+## 
+## Split R-hat values satisfactory all parameters.
+## 
+## Processing complete, no problems detected.
+```
+
+
+```r
+fit$cmdstan_summary()
+```
+
+```
+## Inference for Stan model: gmm_model
+## 4 chains: each with iter=(1000,1000,1000,1000); warmup=(0,0,0,0); thin=(1,1,1,1); 4000 iterations saved.
+## 
+## Warmup took (160, 167, 137, 134) seconds, 10.0 minutes total
+## Sampling took (154, 143, 157, 157) seconds, 10 minutes total
+## 
+##                     Mean     MCSE   StdDev        5%       50%       95%    N_Eff  N_Eff/s    R_hat
+## 
+## lp__             2.0e+02  1.8e-01  6.6e+00   1.9e+02   2.0e+02   2.1e+02     1379      2.3      1.0
+## accept_stat__    9.3e-01  7.0e-03  9.3e-02   7.3e-01   9.7e-01   1.0e+00  1.7e+02  2.9e-01  1.0e+00
+## stepsize__       6.5e-03  4.9e-04  6.9e-04   5.3e-03   7.0e-03   7.1e-03  2.0e+00  3.3e-03  3.7e+13
+## treedepth__      9.0e+00  5.1e-03  1.2e-01   9.0e+00   9.0e+00   9.0e+00  5.2e+02  8.4e-01      nan
+## n_leapfrog__     5.4e+02  1.4e+01  1.3e+02   5.1e+02   5.1e+02   5.1e+02  9.4e+01  1.5e-01  1.0e+00
+## divergent__      0.0e+00      nan  0.0e+00   0.0e+00   0.0e+00   0.0e+00      nan      nan      nan
+## energy__        -1.6e+02  2.6e-01  9.2e+00  -1.7e+02  -1.6e+02  -1.4e+02  1.3e+03  2.1e+00  1.0e+00
+## 
+## c[1]             1.1e+01  9.0e-02  1.7e+00   8.2e+00   1.1e+01   1.4e+01      342     0.56      1.0
+## c[2]            -9.5e-01  1.2e-02  2.3e-01  -1.3e+00  -9.5e-01  -5.8e-01      347     0.57      1.0
+## c[3]            -2.9e-01  3.0e-03  5.4e-02  -3.8e-01  -2.9e-01  -2.0e-01      318     0.52      1.0
+## c[4]            -3.1e+00  3.6e-03  1.5e-01  -3.3e+00  -3.1e+00  -2.8e+00     1803      3.0      1.0
+## c[5]             2.9e-01  5.1e-04  2.2e-02   2.5e-01   2.9e-01   3.3e-01     1774      2.9      1.0
+## c[6]            -7.6e-03  1.2e-05  8.2e-04  -8.9e-03  -7.6e-03  -6.2e-03     4589      7.5     1.00
+## c[7]            -5.6e-01  8.9e-03  2.1e-01  -9.1e-01  -5.6e-01  -2.2e-01      548     0.90      1.0
+## phi_SS           5.1e-01  1.9e-04  1.2e-02   4.9e-01   5.1e-01   5.3e-01     3955      6.5      1.0
+## phi_S2S          3.2e-01  1.2e-03  6.0e-02   2.4e-01   3.2e-01   4.4e-01     2608      4.3     1.00
+## tau              4.2e-01  9.2e-04  4.7e-02   3.4e-01   4.1e-01   5.0e-01     2634      4.3      1.0
+## deltaB[1]        5.7e-01  4.2e-03  1.3e-01   3.6e-01   5.8e-01   7.9e-01      988      1.6      1.0
+## deltaB[2]        5.5e-01  4.2e-03  1.3e-01   3.3e-01   5.5e-01   7.7e-01     1000      1.6      1.0
+## deltaB[3]       -9.5e-02  4.1e-03  1.3e-01  -3.1e-01  -9.5e-02   1.2e-01     1052      1.7      1.0
+## deltaB[4]        4.6e-01  4.3e-03  1.3e-01   2.4e-01   4.6e-01   6.8e-01      966      1.6      1.0
+## deltaB[5]        3.4e-01  4.4e-03  1.3e-01   1.2e-01   3.4e-01   5.6e-01      893      1.5      1.0
+## deltaB[6]        1.6e-01  6.8e-03  1.7e-01  -1.2e-01   1.7e-01   4.5e-01      640      1.0      1.0
+## deltaB[7]        2.4e-01  4.9e-03  1.4e-01   1.4e-02   2.4e-01   4.7e-01      813      1.3      1.0
+## deltaB[8]       -2.5e-01  6.0e-03  1.7e-01  -5.2e-01  -2.5e-01   2.2e-02      771      1.3      1.0
+## deltaB[9]       -2.2e-02  4.7e-03  1.4e-01  -2.5e-01  -1.8e-02   1.9e-01      839      1.4      1.0
+## deltaB[10]      -4.1e-01  7.1e-03  1.8e-01  -7.0e-01  -4.1e-01  -1.2e-01      625      1.0      1.0
+## deltaB[11]      -3.5e-01  4.5e-03  1.4e-01  -5.7e-01  -3.5e-01  -1.3e-01      905      1.5      1.0
+## deltaB[12]       2.2e-01  7.4e-03  1.8e-01  -8.9e-02   2.2e-01   5.2e-01      618      1.0      1.0
+## deltaB[13]      -4.8e-01  4.8e-03  1.4e-01  -7.1e-01  -4.7e-01  -2.6e-01      811      1.3      1.0
+## deltaB[14]      -1.4e-01  4.3e-03  1.4e-01  -3.6e-01  -1.4e-01   7.7e-02      999      1.6      1.0
+## deltaB[15]       4.8e-01  6.0e-03  1.6e-01   2.1e-01   4.8e-01   7.5e-01      731      1.2      1.0
+## deltaB[16]       1.6e-02  5.2e-03  1.5e-01  -2.3e-01   1.9e-02   2.6e-01      842      1.4     1.00
+## deltaB[17]       4.4e-01  5.2e-03  1.5e-01   1.9e-01   4.4e-01   6.8e-01      813      1.3      1.0
+## deltaB[18]      -4.9e-01  4.0e-03  1.3e-01  -7.0e-01  -4.9e-01  -2.7e-01     1072      1.8      1.0
+## deltaB[19]       6.9e-01  4.1e-03  1.3e-01   4.7e-01   6.9e-01   9.0e-01     1040      1.7      1.0
+## deltaB[20]      -1.5e-01  4.7e-03  1.4e-01  -3.8e-01  -1.5e-01   7.1e-02      857      1.4      1.0
+## deltaB[21]      -3.7e-01  5.9e-03  1.6e-01  -6.3e-01  -3.7e-01  -1.1e-01      711      1.2      1.0
+## deltaB[22]      -1.6e-01  6.4e-03  1.7e-01  -4.5e-01  -1.6e-01   1.2e-01      736      1.2      1.0
+## deltaB[23]       7.6e-01  4.3e-03  1.3e-01   5.4e-01   7.6e-01   9.8e-01      963      1.6      1.0
+## deltaB[24]      -2.3e-01  5.0e-03  1.3e-01  -4.5e-01  -2.3e-01  -1.5e-02      725      1.2      1.0
+## deltaB[25]       3.9e-01  4.2e-03  1.4e-01   1.5e-01   3.9e-01   6.2e-01     1158      1.9      1.0
+## deltaB[26]       5.6e-01  9.2e-03  2.2e-01   2.1e-01   5.6e-01   9.3e-01      568     0.93      1.0
+## deltaB[27]       1.1e-01  4.5e-03  1.3e-01  -1.1e-01   1.1e-01   3.4e-01      869      1.4      1.0
+## deltaB[28]      -2.4e-01  4.5e-03  1.3e-01  -4.6e-01  -2.4e-01  -1.6e-02      854      1.4      1.0
+## deltaB[29]      -3.6e-01  4.0e-03  1.3e-01  -5.9e-01  -3.6e-01  -1.4e-01     1098      1.8      1.0
+## deltaB[30]      -2.4e-01  4.9e-03  1.4e-01  -4.7e-01  -2.4e-01  -1.4e-02      792      1.3      1.0
+## deltaB[31]       2.1e-01  5.9e-03  1.7e-01  -5.8e-02   2.1e-01   4.9e-01      775      1.3      1.0
+## deltaB[32]      -7.7e-01  4.0e-03  1.3e-01  -9.9e-01  -7.7e-01  -5.6e-01     1057      1.7      1.0
+## deltaB[33]      -3.5e-01  7.0e-03  1.7e-01  -6.4e-01  -3.5e-01  -5.9e-02      629      1.0      1.0
+## deltaB[34]      -3.0e-01  4.1e-03  1.3e-01  -5.2e-01  -3.0e-01  -8.2e-02     1061      1.7      1.0
+## deltaB[35]      -7.1e-02  4.0e-03  1.3e-01  -2.9e-01  -7.2e-02   1.5e-01     1098      1.8      1.0
+## deltaB[36]      -1.2e-01  4.6e-03  1.4e-01  -3.5e-01  -1.2e-01   1.1e-01      913      1.5      1.0
+## deltaB[37]       6.4e-02  4.7e-03  1.4e-01  -1.6e-01   6.2e-02   2.9e-01      858      1.4      1.0
+## deltaB[38]       3.1e-02  5.7e-03  1.6e-01  -2.3e-01   2.9e-02   2.9e-01      800      1.3      1.0
+## deltaB[39]      -7.8e-01  6.0e-03  1.7e-01  -1.0e+00  -7.7e-01  -5.0e-01      748      1.2      1.0
+## deltaB[40]       2.3e-01  5.1e-03  1.5e-01  -1.4e-02   2.3e-01   4.8e-01      878      1.4      1.0
+## deltaB[41]       8.5e-02  5.7e-03  1.6e-01  -1.8e-01   8.5e-02   3.5e-01      778      1.3      1.0
+## deltaB[42]       3.6e-02  4.7e-03  1.4e-01  -1.9e-01   3.6e-02   2.6e-01      842      1.4      1.0
+## deltaB[43]       6.9e-02  4.8e-03  1.4e-01  -1.6e-01   6.9e-02   3.0e-01      838      1.4      1.0
+## deltaB[44]      -7.3e-01  4.5e-03  1.4e-01  -9.6e-01  -7.3e-01  -5.0e-01      993      1.6      1.0
+## deltaB[45]      -3.4e-01  4.3e-03  1.4e-01  -5.7e-01  -3.4e-01  -1.2e-01      991      1.6      1.0
+## deltaB[46]       5.3e-01  4.5e-03  1.4e-01   3.0e-01   5.3e-01   7.6e-01      924      1.5      1.0
+## deltaB[47]      -2.8e-01  7.9e-03  1.9e-01  -5.9e-01  -2.8e-01   3.2e-02      582     0.95      1.0
+## deltaB[48]       1.3e-01  4.2e-03  1.3e-01  -8.3e-02   1.3e-01   3.5e-01      978      1.6      1.0
+## deltaB[49]      -1.2e-01  4.5e-03  1.4e-01  -3.4e-01  -1.2e-01   1.1e-01      929      1.5      1.0
+## deltaB[50]       3.9e-01  4.8e-03  1.4e-01   1.6e-01   3.9e-01   6.2e-01      827      1.4      1.0
+## deltaS[1]       -1.7e-01  4.9e-03  1.4e-01  -3.9e-01  -1.7e-01   5.7e-02      773      1.3      1.0
+## deltaS[2]       -4.9e-01  5.5e-03  1.2e-01  -7.0e-01  -4.9e-01  -2.9e-01      494     0.81      1.0
+## deltaS[3]        4.4e-01  3.3e-03  1.0e-01   2.7e-01   4.3e-01   6.1e-01      995      1.6      1.0
+## deltaS[4]       -1.5e-01  3.2e-03  1.0e-01  -3.1e-01  -1.5e-01   1.1e-02      993      1.6      1.0
+## deltaS[5]       -1.0e-01  6.6e-03  1.4e-01  -3.4e-01  -9.6e-02   1.3e-01      447     0.73      1.0
+## deltaS[6]       -3.1e-01  5.4e-03  1.2e-01  -5.1e-01  -3.1e-01  -1.1e-01      509     0.83      1.0
+## deltaS[7]        2.4e-02  4.9e-03  1.4e-01  -2.0e-01   2.4e-02   2.5e-01      762      1.2      1.0
+## deltaS[8]        2.6e-01  3.6e-03  1.1e-01   7.5e-02   2.6e-01   4.3e-01      958      1.6      1.0
+## deltaS[9]       -2.8e-01  5.6e-03  1.3e-01  -4.9e-01  -2.7e-01  -7.4e-02      503     0.82      1.0
+## deltaS[10]      -3.9e-01  5.2e-03  1.4e-01  -6.2e-01  -3.9e-01  -1.6e-01      743      1.2      1.0
+## deltaS[11]       5.6e-01  6.6e-03  1.5e-01   3.2e-01   5.6e-01   8.0e-01      481     0.79      1.0
+## deltaS[12]       2.1e-01  6.4e-03  1.4e-01  -2.7e-02   2.1e-01   4.3e-01      474     0.78      1.0
+## deltaS[13]      -6.2e-02  4.9e-03  1.2e-01  -2.7e-01  -6.0e-02   1.4e-01      606     0.99      1.0
+## deltaS[14]       2.1e-01  3.4e-03  1.1e-01   3.9e-02   2.1e-01   3.9e-01      957      1.6      1.0
+## deltaS[15]      -9.4e-02  3.3e-03  1.0e-01  -2.7e-01  -9.3e-02   7.4e-02      994      1.6      1.0
+## deltaS[16]      -3.8e-01  3.7e-03  1.0e-01  -5.5e-01  -3.8e-01  -2.1e-01      775      1.3      1.0
+## deltaS[17]       2.3e-01  5.5e-03  1.2e-01   3.8e-02   2.3e-01   4.2e-01      464     0.76      1.0
+## deltaS[18]       1.4e-01  3.3e-03  9.9e-02  -1.6e-02   1.4e-01   3.1e-01      893      1.5      1.0
+## deltaS[19]       1.5e-01  5.5e-03  1.5e-01  -9.7e-02   1.4e-01   3.9e-01      739      1.2      1.0
+## deltaS[20]       1.7e-01  4.0e-03  1.2e-01  -2.2e-02   1.7e-01   3.6e-01      894      1.5      1.0
+## 
+## Samples were drawn using hmc with nuts.
+## For each parameter, N_Eff is a crude measure of effective sample size,
+## and R_hat is the potential scale reduction factor on split chains (at 
+## convergence, R_hat=1).
+```
+
+The output of running `mod$sample()` is a `CmdStanMCMC` object.
 We can use the associated `print` method to get a summary of the fit.
+
 
 
 ```r
@@ -348,20 +516,23 @@ fit$print(variables = c('c','phi_SS', 'tau', 'phi_S2S'))
 
 ```
 ##  variable  mean median   sd  mad    q5   q95 rhat ess_bulk ess_tail
-##   c[1]    10.91  10.93 1.72 1.71  8.02 13.66 1.00      247      401
-##   c[2]    -0.96  -0.96 0.24 0.23 -1.35 -0.56 1.00      258      386
-##   c[3]    -0.29  -0.29 0.05 0.05 -0.38 -0.20 1.00      248      442
-##   c[4]    -3.09  -3.09 0.15 0.15 -3.34 -2.83 1.00     1028     1143
-##   c[5]     0.29   0.29 0.02 0.02  0.25  0.33 1.00     1069     1017
-##   c[6]    -0.01  -0.01 0.00 0.00 -0.01 -0.01 1.00     2015     1595
-##   c[7]    -0.56  -0.56 0.21 0.21 -0.91 -0.22 1.01      190      494
-##   phi_SS   0.51   0.51 0.01 0.01  0.49  0.53 1.00     2412     1455
-##   tau      0.41   0.41 0.05 0.05  0.34  0.50 1.00     1542     1563
-##   phi_S2S  0.32   0.32 0.06 0.06  0.24  0.43 1.00     1201      918
+##   c[1]    10.85  10.84 1.67 1.72  8.17 13.54 1.00      349      503
+##   c[2]    -0.95  -0.95 0.23 0.24 -1.33 -0.58 1.00      353      598
+##   c[3]    -0.29  -0.29 0.05 0.06 -0.38 -0.20 1.01      322      647
+##   c[4]    -3.08  -3.09 0.15 0.15 -3.33 -2.82 1.00     1842     2321
+##   c[5]     0.29   0.29 0.02 0.02  0.25  0.33 1.00     1800     2486
+##   c[6]    -0.01  -0.01 0.00 0.00 -0.01 -0.01 1.00     4623     3242
+##   c[7]    -0.56  -0.56 0.21 0.21 -0.91 -0.22 1.01      556      857
+##   phi_SS   0.51   0.51 0.01 0.01  0.49  0.53 1.00     4102     2840
+##   tau      0.42   0.41 0.05 0.05  0.34  0.50 1.00     2747     2576
+##   phi_S2S  0.32   0.32 0.06 0.06  0.24  0.44 1.00     2832     2545
 ```
 
 As we can see, the Rhat values are all close to one, indicating good convergence of the chains.
 Below, we plot trace plots of the chains for the standard deviation parameters.
+Trace plots are a quick qualitative view to check whether the different chains have converged.
+We convert the posterior samples, which are stored in the `CmdStanMCMC` object `fit` into a `draws` format of the **posterior** package [@Buerkner2021] <https://mc-stan.org/posterior/reference/posterior-package.html>.
+We then plot the traces of the standard deviations using `mcmc_trace' from the **bayesplot** package [@Gabry2019] <https://mc-stan.org/bayesplot/>.
 
 
 ```r
@@ -373,7 +544,14 @@ mcmc_trace(posterior, regex_pars = c("phi_SS", "tau", "phi_S2S")) +
 
 ![](pictures/stan_fit_trace-1.png)<!-- -->
 
-Histograms of the parameters show the uncertainty associaed with each parameter.
+
+### Assessing Results
+
+Now, we look at some of the results.
+The outcome of the fit are samples from the posterior distribution.
+Together, these samples span the range of possible outcomes of the parameters, and are thus an assessment of the epistemic uncertainty associated with the model.
+
+Histograms of the posterior samples of the parameters show the uncertainty associated with each parameter.
 
 
 ```r
@@ -400,9 +578,32 @@ mcmc_hist(posterior, regex_pars = c("phi_SS", "tau", "phi_S2S")) +
 
 ![](pictures/posterior_hist-2.png)<!-- -->
 
+Below, we plot the a density estimate of $c_1$, together with the true value (solid line) and he value estimated using `lmer` (dashed line),
 
 ```r
-mcmc_intervals(posterior, regex_pars = c("phi_SS", "tau", "phi_S2S")) +
+size_text <- 20
+size_title <- 30
+i <- 1 # plot first coefficient
+mcmc_dens(posterior, pars = sprintf("c[%d]",i)) + 
+    vline_at(c(coeffs[i], coeffs_lmer[i]), size = c(1,0.75), linetype = c(1,2)) +
+    xaxis_text(size = size_text, family = "sans") + 
+    yaxis_text(size = size_text, family = "sans") +
+    xaxis_title(size = size_title, family = "sans") + 
+    yaxis_title(size = size_title, family = "sans") +
+    grid_lines(color = "gray60")
+```
+
+![](pictures/posterior hist2-1.png)<!-- -->
+
+A different way to visualize the posterior for each parameter is to plot intervals, which can be done with `mcmc_intervals`.
+`mcmc_areas` plots density estimates of the posterior distribution of the parameters.
+
+
+
+```r
+mcmc_intervals(posterior, regex_pars = c("phi_SS", "tau", "phi_S2S"),
+               prob = 0.5,
+               prob_outer = 0.9) +
   xaxis_text(size = 30, family = "sans") + 
   yaxis_text(size = 30, family = "sans") +
   grid_lines(color = "gray60")
@@ -432,3 +633,65 @@ mcmc_intervals(posterior, regex_pars = c("deltaS"),
 ```
 
 ![](pictures/posterior_intervals_deltaS-1.png)<!-- -->
+
+Pairs plots show the correlation between different parameters, and can be done via `mcmc_scatter`, `mcmc_pairs` or `mcmc_hex`.
+Parameters to be plotted are selected via the `pars` or `regex_pars` argument, with the latter selecting parameters based on regular expressions.
+It is also possible to transform the variables, either indvidually, or all of them.
+
+
+```r
+mcmc_pairs(posterior, pars = "tau", regex_pars = "c\\[[1,4]\\]",
+           off_diag_args = list(size = 1, alpha = 0.5))
+```
+
+![](pictures/pairs plots-1.png)<!-- -->
+
+```r
+mcmc_hex(posterior, pars = c("tau", "phi_S2S"), transform = list(tau = "log"))
+```
+
+![](pictures/pairs plots-2.png)<!-- -->
+
+```r
+mcmc_scatter(posterior, pars = c("phi_SS", "phi_S2S"), transform = "log")
+```
+
+![](pictures/pairs plots-3.png)<!-- -->
+
+One can also extract variables from the posterior distribution (in draws format), and get summaries.
+For example below we extract summaries of the event terms, and plot the event terms (and their uncertainty) against magnitude.
+We also plot them agaianst the true (simulated) values, to see that they are well estimated.
+
+
+```r
+deltaB <- as.data.frame(summarise_draws(subset(posterior, variable = "^deltaB\\[[0-9]+\\]", regex = TRUE)))
+df_plot <- data.frame(M = dataM[,1], deltaB = deltaB$mean, q05 = deltaB$q5, q95 = deltaB$q95, eta = dataM[,2])
+ggplot(df_plot, aes(x = M, y = deltaB)) + 
+  geom_point() +
+  ylim(-1.2,1.2) +
+  geom_pointrange(aes(ymin = q05, ymax = q95)) +
+  labs(title = "Event Terms") +
+  theme(
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    plot.title = element_text(size = 20)
+  )
+```
+
+![](pictures/deltaB-1.png)<!-- -->
+
+```r
+ggplot(df_plot, aes(x = eta, y = deltaB)) + 
+  geom_point() + geom_abline(intercept = 0, slope = 1, colour = "red") +
+  ylim(-1.2,1.2) +
+  geom_pointrange(aes(ymin = q05, ymax = q95)) +
+  labs(title = "Event Terms",
+       x = "deltaB_true", y = "detlaB_est") +
+  theme(
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    plot.title = element_text(size = 20)
+  )
+```
+
+![](pictures/deltaB-2.png)<!-- -->

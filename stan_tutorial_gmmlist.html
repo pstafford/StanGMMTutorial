@@ -47,6 +47,15 @@ if (!!window.navigator.userAgent.match("MSIE 8")) {
 !function(a){"use strict";a.matchMedia=a.matchMedia||function(a){var b,c=a.documentElement,d=c.firstElementChild||c.firstChild,e=a.createElement("body"),f=a.createElement("div");return f.id="mq-test-1",f.style.cssText="position:absolute;top:-100em",e.style.background="none",e.appendChild(f),function(a){return f.innerHTML='&shy;<style media="'+a+'"> #mq-test-1 { width: 42px; }</style>',c.insertBefore(e,d),b=42===f.offsetWidth,c.removeChild(e),{matches:b,media:a}}}(a.document)}(this),function(a){"use strict";function b(){u(!0)}var c={};a.respond=c,c.update=function(){};var d=[],e=function(){var b=!1;try{b=new a.XMLHttpRequest}catch(c){b=new a.ActiveXObject("Microsoft.XMLHTTP")}return function(){return b}}(),f=function(a,b){var c=e();c&&(c.open("GET",a,!0),c.onreadystatechange=function(){4!==c.readyState||200!==c.status&&304!==c.status||b(c.responseText)},4!==c.readyState&&c.send(null))};if(c.ajax=f,c.queue=d,c.regex={media:/@media[^\{]+\{([^\{\}]*\{[^\}\{]*\})+/gi,keyframes:/@(?:\-(?:o|moz|webkit)\-)?keyframes[^\{]+\{(?:[^\{\}]*\{[^\}\{]*\})+[^\}]*\}/gi,urls:/(url\()['"]?([^\/\)'"][^:\)'"]+)['"]?(\))/g,findStyles:/@media *([^\{]+)\{([\S\s]+?)$/,only:/(only\s+)?([a-zA-Z]+)\s?/,minw:/\([\s]*min\-width\s*:[\s]*([\s]*[0-9\.]+)(px|em)[\s]*\)/,maxw:/\([\s]*max\-width\s*:[\s]*([\s]*[0-9\.]+)(px|em)[\s]*\)/},c.mediaQueriesSupported=a.matchMedia&&null!==a.matchMedia("only all")&&a.matchMedia("only all").matches,!c.mediaQueriesSupported){var g,h,i,j=a.document,k=j.documentElement,l=[],m=[],n=[],o={},p=30,q=j.getElementsByTagName("head")[0]||k,r=j.getElementsByTagName("base")[0],s=q.getElementsByTagName("link"),t=function(){var a,b=j.createElement("div"),c=j.body,d=k.style.fontSize,e=c&&c.style.fontSize,f=!1;return b.style.cssText="position:absolute;font-size:1em;width:1em",c||(c=f=j.createElement("body"),c.style.background="none"),k.style.fontSize="100%",c.style.fontSize="100%",c.appendChild(b),f&&k.insertBefore(c,k.firstChild),a=b.offsetWidth,f?k.removeChild(c):c.removeChild(b),k.style.fontSize=d,e&&(c.style.fontSize=e),a=i=parseFloat(a)},u=function(b){var c="clientWidth",d=k[c],e="CSS1Compat"===j.compatMode&&d||j.body[c]||d,f={},o=s[s.length-1],r=(new Date).getTime();if(b&&g&&p>r-g)return a.clearTimeout(h),h=a.setTimeout(u,p),void 0;g=r;for(var v in l)if(l.hasOwnProperty(v)){var w=l[v],x=w.minw,y=w.maxw,z=null===x,A=null===y,B="em";x&&(x=parseFloat(x)*(x.indexOf(B)>-1?i||t():1)),y&&(y=parseFloat(y)*(y.indexOf(B)>-1?i||t():1)),w.hasquery&&(z&&A||!(z||e>=x)||!(A||y>=e))||(f[w.media]||(f[w.media]=[]),f[w.media].push(m[w.rules]))}for(var C in n)n.hasOwnProperty(C)&&n[C]&&n[C].parentNode===q&&q.removeChild(n[C]);n.length=0;for(var D in f)if(f.hasOwnProperty(D)){var E=j.createElement("style"),F=f[D].join("\n");E.type="text/css",E.media=D,q.insertBefore(E,o.nextSibling),E.styleSheet?E.styleSheet.cssText=F:E.appendChild(j.createTextNode(F)),n.push(E)}},v=function(a,b,d){var e=a.replace(c.regex.keyframes,"").match(c.regex.media),f=e&&e.length||0;b=b.substring(0,b.lastIndexOf("/"));var g=function(a){return a.replace(c.regex.urls,"$1"+b+"$2$3")},h=!f&&d;b.length&&(b+="/"),h&&(f=1);for(var i=0;f>i;i++){var j,k,n,o;h?(j=d,m.push(g(a))):(j=e[i].match(c.regex.findStyles)&&RegExp.$1,m.push(RegExp.$2&&g(RegExp.$2))),n=j.split(","),o=n.length;for(var p=0;o>p;p++)k=n[p],l.push({media:k.split("(")[0].match(c.regex.only)&&RegExp.$2||"all",rules:m.length-1,hasquery:k.indexOf("(")>-1,minw:k.match(c.regex.minw)&&parseFloat(RegExp.$1)+(RegExp.$2||""),maxw:k.match(c.regex.maxw)&&parseFloat(RegExp.$1)+(RegExp.$2||"")})}u()},w=function(){if(d.length){var b=d.shift();f(b.href,function(c){v(c,b.href,b.media),o[b.href]=!0,a.setTimeout(function(){w()},0)})}},x=function(){for(var b=0;b<s.length;b++){var c=s[b],e=c.href,f=c.media,g=c.rel&&"stylesheet"===c.rel.toLowerCase();e&&g&&!o[e]&&(c.styleSheet&&c.styleSheet.rawCssText?(v(c.styleSheet.rawCssText,e,f),o[e]=!0):(!/^([a-zA-Z:]*\/\/)/.test(e)&&!r||e.replace(RegExp.$1,"").split("/")[0]===a.location.host)&&("//"===e.substring(0,2)&&(e=a.location.protocol+e),d.push({href:e,media:f})))}w()};x(),c.update=x,c.getEmValue=t,a.addEventListener?a.addEventListener("resize",b,!1):a.attachEvent&&a.attachEvent("onresize",b)}}(this);
 };
 </script>
+<style>h1 {font-size: 34px;}
+       h1.title {font-size: 38px;}
+       h2 {font-size: 30px;}
+       h3 {font-size: 24px;}
+       h4 {font-size: 18px;}
+       h5 {font-size: 16px;}
+       h6 {font-size: 12px;}
+       code {color: inherit; background-color: rgba(0, 0, 0, 0.04);}
+       pre:not([class]) { background-color: white }</style>
 <script>
 
 /**
@@ -213,37 +222,12 @@ document.addEventListener('DOMContentLoaded', function() {
   div.column{display: inline-block; vertical-align: top; width: 50%;}
   div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
   ul.task-list{list-style: none;}
-      </style>
+    </style>
 
 
 
 
-<style type="text/css">
-h1 {
-  font-size: 34px;
-}
-h1.title {
-  font-size: 38px;
-}
-h2 {
-  font-size: 30px;
-}
-h3 {
-  font-size: 24px;
-}
-h4 {
-  font-size: 18px;
-}
-h5 {
-  font-size: 16px;
-}
-h6 {
-  font-size: 12px;
-}
-.table th:not([align]) {
-  text-align: left;
-}
-</style>
+
 
 
 
@@ -253,10 +237,6 @@ h6 {
   max-width: 940px;
   margin-left: auto;
   margin-right: auto;
-}
-code {
-  color: inherit;
-  background-color: rgba(0, 0, 0, 0.04);
 }
 img {
   max-width:100%;
@@ -273,6 +253,9 @@ button.code-folding-btn:focus {
 summary {
   display: list-item;
 }
+pre code {
+  padding: 0;
+}
 </style>
 
 
@@ -285,7 +268,6 @@ summary {
   max-height: 500px;
   min-height: 44px;
   overflow-y: auto;
-  background: white;
   border: 1px solid #ddd;
   border-radius: 4px;
 }
@@ -349,13 +331,13 @@ summary {
 
 
 
-<div class="fluid-row" id="header">
+<div id="header">
 
 
 
 <h1 class="title toc-ignore">GMM Estimation Using Stan - Tutorial and List of Models</h1>
 <h4 class="author">Nicolas Kuehn and Peter Stafford</h4>
-<h4 class="date">03 November, 2020</h4>
+<h4 class="date">12 August, 2021</h4>
 
 </div>
 
@@ -390,8 +372,8 @@ summary {
 <div id="getting-started" class="section level1">
 <h1><span class="header-section-number">2</span> Getting Started</h1>
 <p>This tutorial uses <strong>Stan</strong> version 2.24.1.</p>
-<pre><code>## [1] &quot;/Users/nico/GROUNDMOTION/SOFTWARE/cmdstan-2.24.1&quot;</code></pre>
-<pre><code>## [1] &quot;2.24.1&quot;</code></pre>
+<pre><code>## [1] &quot;/Users/nico/GROUNDMOTION/SOFTWARE/cmdstan-2.27.0&quot;</code></pre>
+<pre><code>## [1] &quot;2.27.0&quot;</code></pre>
 </div>
 <div id="a-simple-stan-program-for-ground-motion-model-regression" class="section level1">
 <h1><span class="header-section-number">3</span> A simple Stan Program for Ground-Motion Model Regression</h1>
@@ -645,7 +627,7 @@ model {}
 ## }
 ## 
 ## transformed data {
-##   real vref = 760;
+##   real vref = 400;
 ## }
 ## 
 ## parameters {
@@ -822,7 +804,7 @@ h_e = a \exp(b M_e + \delta B_{2,e})
 ## }
 ## 
 ## transformed data {
-##   real vref = 760;
+##   real vref = 400;
 ## }
 ## 
 ## parameters {
@@ -891,7 +873,7 @@ h_e = a \exp(b M_e + \delta B_{2,e})
 ## }
 ## 
 ## transformed data {
-##   real vref = 760;
+##   real vref = 400;
 ##   vector[2] mu_eq;
 ##   
 ##   for(i in 1:2)
@@ -963,7 +945,7 @@ h_e = a \exp(b M_e + \delta B_{2,e})
 ## }
 ## 
 ## transformed data {
-##   real vref = 760;
+##   real vref = 400;
 ##   vector[2] mu_eq;
 ##   
 ##   for(i in 1:2)
@@ -1029,7 +1011,7 @@ h_e = a \exp(b M_e + \delta B_{2,e})
 </div>
 <div id="partially-nonergodic-models" class="section level2">
 <h2><span class="header-section-number">4.4</span> Partially Nonergodic Models</h2>
-<p>Over the last few years it has been recognized that the ergodic assumption <span class="citation">(Anderson and Brune 1999)</span> (that the ground-motion distribution at a site over time is the same as the ground-motion distribution over space) can lead to biased hazard results. With an increasing amount of data in different regions, the ergodic assumption can be relaxed. An intermediate step towards fully nonergodic models are partially nonergodic models (though one can argue that models that account for systematic station terms <span class="math inline">\(\delta S\)</span> are already partially nonergodic) in which some of the parameters are different for different regions. Often, the constant, anelastic attenuation coefficient, and the site-scaling coefficient are regionally dependent <span class="citation">(Stafford 2014, @Kotha2016, @Sedaghati2017, @Kuehn2016)</span>. It makes sense to model these as regional random effects, since in that case the coefficient for regions with a smaller amount of data are automatically associated with larger uncertainty (in the Bayesian case, a wider posterior distribution). Typically, one assumes that the regional random effects are distributed according to a normal distribution, where the regional coefficients are samples from a global coefficient (<em>e.g.</em>, for the constant <span class="math inline">\(\theta_1\)</span>) <span class="math display">\[
+<p>Over the last few years it has been recognized that the ergodic assumption <span class="citation">(Anderson and Brune 1999)</span> (that the ground-motion distribution at a site over time is the same as the ground-motion distribution over space) can lead to biased hazard results. With an increasing amount of data in different regions, the ergodic assumption can be relaxed. An intermediate step towards fully nonergodic models are partially nonergodic models (though one can argue that models that account for systematic station terms <span class="math inline">\(\delta S\)</span> are already partially nonergodic) in which some of the parameters are different for different regions. Often, the constant, anelastic attenuation coefficient, and the site-scaling coefficient are regionally dependent <span class="citation">(Stafford 2014; Kotha, Bindi, and Cotton 2016; Kuehn and Scherbaum 2016; Sedaghati and Pezeshk 2017)</span>. It makes sense to model these as regional random effects, since in that case the coefficient for regions with a smaller amount of data are automatically associated with larger uncertainty (in the Bayesian case, a wider posterior distribution). Typically, one assumes that the regional random effects are distributed according to a normal distribution, where the regional coefficients are samples from a global coefficient (<em>e.g.</em>, for the constant <span class="math inline">\(\theta_1\)</span>) <span class="math display">\[
 \theta_1 \sim \mathcal N(\mu_{\theta 1},\sigma_{\theta 1})
 \]</span> where <span class="math inline">\(\mu_{\theta_1}\)</span> is the (global) mean (over the data set) for the constant coefficient and <span class="math inline">\(\sigma_{\theta_1}\)</span> is the standard deviation which determines how much the regional coefficients can differ from the global mean. Below, we have written a Stan model with regional coefficients for the constant, the anelastic attenuation (linear R scaling) and the <span class="math inline">\(V_{S30}\)</span>-scaling. We add an integer for the number of regions, as well as an integer comprising the region indices for the records to the <code>data {}</code> block. We then declare the mean coefficients and vectors for the regional coefficients, as well as the standard deviations. In this case, the regional parameters are declared as independent, but they can also be modeled as correlated as explained previously. We have declared the regional parameters <code>theta6</code> (linear R term) with <code>vector&lt;upper=0&gt;[NREG] theta6</code>, so they are constrained to be negative. This is a physical requirement, but in particular for partially nonergodic models it can happen that a regional coefficient becomes positive if data is sparse - this can also happen for long periods, where the coefficient typically approaches zero. Imposing the constraint ensures that this does not happen.</p>
 <pre><code>## data {
@@ -1049,7 +1031,7 @@ h_e = a \exp(b M_e + \delta B_{2,e})
 ## }
 ## 
 ## transformed data {
-##   real vref = 760;
+##   real vref = 400;
 ## }
 ## 
 ## parameters {
@@ -1135,7 +1117,7 @@ z \sim \mathcal N(0,1)
 ## }
 ## 
 ## transformed data {
-##   real vref = 760;
+##   real vref = 400;
 ## }
 ## 
 ## parameters {
@@ -1396,7 +1378,7 @@ model {
 </div>
 <div id="missing-data" class="section level2">
 <h2><span class="header-section-number">4.7</span> Missing Data</h2>
-<p>Sometimes, there is missing data for some records. Typically in GMPE estimation, these records are ignored. However, there are methods how one can deal with missing data <span class="citation">(Rubin 1976, @Allison2002)</span>. A standard method is multiple imputation, for example implemented in the R-package <code>mi</code> <span class="citation">(Su et al. 2011)</span> or <code>mice</code> <span class="citation">(Buuren and Groothuis-Oudshoorn 2011)</span>. In Stan (or Bayesian inference in general), one can declare a missing data point as a parameter in the model, which is estimated. Since a posterior distribution is estimated for the missing data (with different samples), this functions as some sort of multiple imputation.</p>
+<p>Sometimes, there is missing data for some records. Typically in GMPE estimation, these records are ignored. However, there are methods how one can deal with missing data <span class="citation">(Rubin 1976, @Allison2002)</span>. A standard method is multiple imputation, for example implemented in the R-package <code>mi</code> <span class="citation">(Su et al. 2011)</span> or <code>mice</code> <span class="citation">(Yucel 2011)</span>. In Stan (or Bayesian inference in general), one can declare a missing data point as a parameter in the model, which is estimated. Since a posterior distribution is estimated for the missing data (with different samples), this functions as some sort of multiple imputation.</p>
 <p>Below, we show an example, where we assume that some <span class="math inline">\(V_{S30}\)</span>-values are missing. Since each station has a unique <span class="math inline">\(V_{S30}\)</span>-value, that means that we declare the input <span class="math inline">\(V_{S30}\)</span>-values for each stations via <code>vector[N] VS;</code>. Similar to the station term,this means that we also need the index connecting stations to records. We also need a new index which comprises the indices of the missing values, as well as the number of stations with missing values. For example, if the second and tenth station had an unknown <span class="math inline">\(V_{S30}\)</span>-value, then the array of missing values would be of length 2 and consists of <code>c(2,10)</code>.</p>
 <p>The missing values are declared as <code>vector[N_missing_VS] VS_missing;</code>. Since we cannot assign new values to loaded data, we declare a new variable in the <code>transformed parameters {}</code> block, which contains the original <code>VS</code> values, and the estimated missing values for the correct indices. This new variable is then used in the calcuation of the median prediction.</p>
 <p>The missing values should be assigned an informative prior distribution. If this is not available, one could use the (geometric) mean and standard deviation of the available <span class="math inline">\(V_{S30}\)</span>-values. Instead of estimating <span class="math inline">\(V_{S30}\)</span>, one could also estimate <span class="math inline">\(\ln V_{S30}\)</span>.</p>
@@ -1836,7 +1818,7 @@ matrix[ObsPerEvent[i],ObsPerEvent[i]] eventLCov = phiSS * block( LspatialCorrela
 ##   deltaS ~ normal(0,phiS2S);
 ##   
 ##   for(i in 1:N) {
-##     mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
+##     mu[i] = theta1 + theta2 * M[i] + theta3 * square(8 - M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
 ##   }
 ## 
 ##   {
@@ -1893,7 +1875,7 @@ matrix[ObsPerEvent[i],ObsPerEvent[i]] eventLCov = phiSS * block( LspatialCorrela
 ##   
 ##   real&lt;lower=0&gt; phiSS;
 ##   real&lt;lower=0&gt; tau;
-##   real&lt;lower=0&gt; phiS2S;
+##   real&lt;lower=0&gt; phiS2S_0;
 ##   
 ##   vector[NEQ] deltaB;
 ##   vector[NSTAT] deltaS;
@@ -1914,16 +1896,16 @@ matrix[ObsPerEvent[i],ObsPerEvent[i]] eventLCov = phiSS * block( LspatialCorrela
 ##   h ~ normal(6,4);
 ##   
 ##   phiSS ~ cauchy(0,0.5);
-##   phiS2S ~ cauchy(0,0.5);
+##   phiS2S_0 ~ cauchy(0,0.5);
 ##   tau ~ cauchy(0,0.5);
 ##   
 ##   deltaB ~ normal(0,tau);
-##   deltaS ~ normal(0,phiS2S);
+##   deltaS ~ normal(0,phiS2S_0);
 ##   
 ##   correlationLength ~ cauchy(5,1);
 ## 
 ##   for(i in 1:N) {
-##     mu[i] = theta1 + theta2 * M[i] + theta3 * square(M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
+##     mu[i] = theta1 + theta2 * M[i] + theta3 * square(8 - M[i]) + (theta4 + theta5 * M[i]) * log(R[i] + h) + theta6 * R[i] + theta7 * log(VS[i]/vref) + deltaB[idx_eq[i]] + deltaS[idx_stat[i]];
 ##   }
 ## 
 ##   {
@@ -1991,7 +1973,7 @@ k(\vec{x}_{s}, \vec{x}_s&#39;) = \theta_{stat}^2 \exp \left[ -\frac{|\vec{x}_{s}
 ##   
 ##   real&lt;lower=0&gt; phiSS;
 ##   real&lt;lower=0&gt; tau;
-##   real&lt;lower=0&gt; phiS2S;
+##   real&lt;lower=0&gt; phiS2S_0;
 ## 
 ##   real&lt;lower=0&gt; rho_stat; // length scale of spatial correlation for station terms
 ##   real&lt;lower=0&gt; theta_stat; // standard deviation of spatial correlation for station terms
@@ -2016,14 +1998,16 @@ k(\vec{x}_{s}, \vec{x}_s&#39;) = \theta_{stat}^2 \exp \left[ -\frac{|\vec{x}_{s}
 ##   h ~ normal(6,4);
 ##   
 ##   phiSS ~ cauchy(0,0.5);
-##   phiS2S ~ cauchy(0,0.5);
+##   phiS2S_0 ~ cauchy(0,0.5);
 ##   tau ~ cauchy(0,0.5);
 ## 
 ##   rho_stat ~ inv_gamma(2.5,0.1);
 ##   theta_stat ~ exponential(20);
+## 
+##   z_stat ~ std_normal();
 ##   
 ##   deltaB ~ normal(0,tau);
-##   deltaS ~ normal(0,phiS2S);
+##   deltaS ~ normal(0,phiS2S_0);
 ## 
 ##   // latent variable station contributions to GP
 ##   {
@@ -2072,9 +2056,6 @@ k(\vec{x}_{s}, \vec{x}_s&#39;) = \theta_{stat}^2 \exp \left[ -\frac{|\vec{x}_{s}
 <div id="ref-Bragato2004">
 <p>Bragato, Pier Luigi. 2004. “Regression Analysis with Truncated Samples and Its Application to Ground-Motion Attenuation Studies.” <em>Bulletin of the Seismological Society of America</em> 94 (4): 1369–78. <a href="https://doi.org/10.1785/012003083">https://doi.org/10.1785/012003083</a>.</p>
 </div>
-<div id="ref-VanBuuren2011">
-<p>Buuren, Stef van, and Karin Groothuis-Oudshoorn. 2011. “mice : Multivariate Imputation by Chained Equations in R.” <em>Journal of Statistical Software</em> 45 (3): 219–42. <a href="https://doi.org/10.18637/jss.v045.i03">https://doi.org/10.18637/jss.v045.i03</a>.</p>
-</div>
 <div id="ref-Chao2018">
 <p>Chao, Shu-Hsien, and Yi-Hau Chen. 2019. “A Novel Regression Analysis Method for Randomly Truncated Strong-Motion Data.” <em>Earthquake Spectra</em> 35 (2): 977–1001. <a href="https://doi.org/10.1193/022218EQS044M">https://doi.org/10.1193/022218EQS044M</a>.</p>
 </div>
@@ -2103,7 +2084,7 @@ k(\vec{x}_{s}, \vec{x}_s&#39;) = \theta_{stat}^2 \exp \left[ -\frac{|\vec{x}_{s}
 <p>Kuehn, Nicolas M, and Norman A Abrahamson. 2018. “The Effect of Uncertainty in Predictor Variables on the Estimation of Ground‐Motion Prediction Equations.” <em>Bulletin of the Seismological Society of America</em> 108 (1): 358–70. <a href="https://doi.org/10.1785/0120170166">https://doi.org/10.1785/0120170166</a>.</p>
 </div>
 <div id="ref-Kuehn2020a">
-<p>Kuehn, Nicolas Martin, Tadahiro Kishida, Mohammad AlHamaydeh, Grigorios Lavrentiadis, and Yousef Bozorgnia. 2020. “A Bayesian model for truncated regression for the estimation of empirical ground-motion models.” <em>Bulletin of Earthquake Engineering</em> 18 (14): 6149–79. <a href="https://doi.org/10.1007/s10518-020-00943-8">https://doi.org/10.1007/s10518-020-00943-8</a>.</p>
+<p>Kuehn, Nicolas Martin, Tadahiro Kishida, Mohammad AlHamaydeh, Grigorios Lavrentiadis, and Yousef Bozorgnia. 2020. “A Bayesian model for truncated regression for the estimation of empirical ground-motion models.” <em>Bulletin of Earthquake Engineering</em>, September. <a href="https://doi.org/10.1007/s10518-020-00943-8">https://doi.org/10.1007/s10518-020-00943-8</a>.</p>
 </div>
 <div id="ref-Kuehn2016">
 <p>Kuehn, Nicolas M., and Frank Scherbaum. 2016. “A partially non-ergodic ground-motion prediction equation for Europe and the Middle East.” <em>Bulletin of Earthquake Engineering</em> 14 (10): 2629–42. <a href="https://doi.org/10.1007/s10518-016-9911-x">https://doi.org/10.1007/s10518-016-9911-x</a>.</p>
@@ -2135,6 +2116,9 @@ k(\vec{x}_{s}, \vec{x}_s&#39;) = \theta_{stat}^2 \exp \left[ -\frac{|\vec{x}_{s}
 <div id="ref-Su2011">
 <p>Su, Yu-Sung, Andrew Gelman, Jennifer Hill, and Masanao Yajima. 2011. “Multiple Imputation with Diagnostics ( mi ) in R : Opening Windows into the Black Box.” <em>Journal of Statistical Software</em> 45 (2). <a href="https://doi.org/10.18637/jss.v045.i02">https://doi.org/10.18637/jss.v045.i02</a>.</p>
 </div>
+<div id="ref-VanBuuren2011">
+<p>Yucel, Recai M. 2011. “State of the Multiple Imputation Software.” <em>Journal of Statistical Software</em> 45 (1): 1–67. <a href="https://doi.org/10.1177/0962280206074463">https://doi.org/10.1177/0962280206074463</a>.</p>
+</div>
 </div>
 </div>
 </div>
@@ -2148,7 +2132,7 @@ k(\vec{x}_{s}, \vec{x}_s&#39;) = \theta_{stat}^2 \exp \left[ -\frac{|\vec{x}_{s}
 
 // add bootstrap table styles to pandoc tables
 function bootstrapStylePandocTables() {
-  $('tr.header').parent('thead').parent('table').addClass('table table-condensed');
+  $('tr.odd').parent('tbody').parent('table').addClass('table table-condensed');
 }
 $(document).ready(function () {
   bootstrapStylePandocTables();
@@ -2166,7 +2150,7 @@ $(document).ready(function () {
 
 $(document).ready(function () {
   $('.tabset-dropdown > .nav-tabs > li').click(function () {
-    $(this).parent().toggleClass('nav-tabs-open')
+    $(this).parent().toggleClass('nav-tabs-open');
   });
 });
 </script>

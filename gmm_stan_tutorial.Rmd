@@ -10,7 +10,7 @@ output:
     number_sections: true
     highlight: tango
   pdf_document: default
-bibliography: references.bib
+bibliography: REF/references.bib
 ---
 
 
@@ -24,18 +24,23 @@ root.dir = '/Users/nico/GROUNDMOTION/PROJECTS/STAN_Tutorial/Git/StanGMMTutorial'
 This is a tutorial on how to use the program Stan (<https://mc-stan.org/>) to estimate the parameters of a ground-motion model (GMM).
 Stan is a program that uses Bayesian inference to estimate the parameters of a model via Markov Chain Monte Carlo (MCMC) sampling.
 
-In this tutorial, we estimate parameters of a GMM used in Kuehn and Stafford.
-A list of Sta programs covering a wide variety of GMMs is available in the other markdown file.
+In this tutorial, we estimate parameters of a GMM used as an example in Kuehn and Stafford.
+A list of Stan programs covering a wide variety of GMMs is available in the other markdown file.
+We will use he package `cmdstanR` to estimate the model parameters, sine it is a lightweight package that allows to use the lates Stan version.
+We cover the basics of running the model and extracting parameters/posterior distributions, and looking at graphical summaries.
+For more info and installation instructions, see <https://mc-stan.org/cmdstanr/> and the vignette <https://mc-stan.org/cmdstanr/articles/cmdstanr.html>.
+For the use of the package Rstan, see <https://mc-stan.org/rstan/>.
 
 # Getting Started
 
-This tutorial uses **Stan** version 2.24.1 and requires the following **R** packages
+This tutorial uses **Stan** version 2.27.0 and requires the following **R** packages.
 ```{r load_libraries, warning=FALSE, message=FALSE}
 # load required packages
 library(lme4)
 library(cmdstanr)
 library(posterior)
 library(bayesplot)
+library(ggplot2)
 
 options(mc.cores = parallel::detectCores())
 ```
@@ -49,7 +54,7 @@ First, we define the color scheme for the bayesplot package, and tell the cmdSta
 ```{r set_options, results = FALSE, message=FALSE}
 color_scheme_set("brightblue")
 
-set_cmdstan_path('/Users/nico/GROUNDMOTION/SOFTWARE/cmdstan-2.24.1')
+set_cmdstan_path('/Users/nico/GROUNDMOTION/SOFTWARE/cmdstan-2.27.0') # replace with Path 
 cmdstan_path()
 cmdstan_version()
 ```
@@ -155,6 +160,9 @@ Stan is typed, so there is a difference between a declaration `real a;` or `int 
 Constraints can be declared as `real<lower=L,upper=U> a;`, which means that `a` can take only values `L <= a <= U`.
 Each line in a stan program has to end in `;`.
 
+Below, we load a Stan model from file `STAN/gmm.stan`.
+It is compiled with `mod <- cmdstan_model(file)`, which returns a `CmdStanModel` object, which can be used to access information about the model, and provides methods to for fitting the model. 
+
 ``` {r stan_model}
 file <- file.path('STAN', 'gmm.stan')
 mod <- cmdstan_model(file)
@@ -162,7 +170,13 @@ mod <- cmdstan_model(file)
 mod$print()
 ```
 
+## cmdstanR
+
 Next, we declare the data for the Stan program, and run the sampler.
+All parameters declared in the `data {}` block are defined as a named list in **R**.
+Then, the `$sample()` method is used to call the MCMC sampler.
+There are options that allow one to control the sampling process, such as setting the number of chains to run, the number of warm-up samples and post-warmup samples, and others.
+For a full list of options, see <https://mc-stan.org/cmdstanr/reference/model-method-sample.html>.
 
 ``` {r run_stan}
 data_list <- list(N = length(data_y),
@@ -178,7 +192,7 @@ data_list <- list(N = length(data_y),
 fit <- mod$sample(
   data = data_list,
   seed = 123,
-  chains = 2,
+  chains = 4,
   iter_sampling = 1000,
   iter_warmup = 1000,
   refresh = 500,
@@ -186,8 +200,23 @@ fit <- mod$sample(
 )
 ```
 
-The output of running `mod$sample()` is a `CmdStanMCMC`.
+
+### Assessing the Model Fit
+
+Next, we do some checks to see whether there were some problems with the fit.
+To understand wome of these diagnostices, see @Vehtari2020 (for Rhat) and @Betancourt2016 (for EBFMI (Energy Bayesian fraction of missing information)).
+
+```{r diagnose}
+fit$cmdstan_diagnose()
+```
+
+```{r summary}
+fit$cmdstan_summary()
+```
+
+The output of running `mod$sample()` is a `CmdStanMCMC` object.
 We can use the associated `print` method to get a summary of the fit.
+
 
 ``` {r print_stan_fit}
 fit$print(variables = c('c','phi_SS', 'tau', 'phi_S2S'))
@@ -195,6 +224,9 @@ fit$print(variables = c('c','phi_SS', 'tau', 'phi_S2S'))
 
 As we can see, the Rhat values are all close to one, indicating good convergence of the chains.
 Below, we plot trace plots of the chains for the standard deviation parameters.
+Trace plots are a quick qualitative view to check whether the different chains have converged.
+We convert the posterior samples, which are stored in the `CmdStanMCMC` object `fit` into a `draws` format of the **posterior** package [@Buerkner2021] <https://mc-stan.org/posterior/reference/posterior-package.html>.
+We then plot the traces of the standard deviations using `mcmc_trace' from the **bayesplot** package [@Gabry2019] <https://mc-stan.org/bayesplot/>.
 
 ``` {r stan_fit_trace}
 posterior <- fit$draws()
@@ -203,7 +235,14 @@ mcmc_trace(posterior, regex_pars = c("phi_SS", "tau", "phi_S2S")) +
   yaxis_title(size = 30, family = "sans")
 ```
 
-Histograms of the parameters show the uncertainty associaed with each parameter.
+
+### Assessing Results
+
+Now, we look at some of the results.
+The outcome of the fit are samples from the posterior distribution.
+Together, these samples span the range of possible outcomes of the parameters, and are thus an assessment of the epistemic uncertainty associated with the model.
+
+Histograms of the posterior samples of the parameters show the uncertainty associated with each parameter.
 
 ```{r posterior_hist}
 mcmc_hist(posterior, regex_pars = c("c")) +
@@ -215,8 +254,28 @@ mcmc_hist(posterior, regex_pars = c("phi_SS", "tau", "phi_S2S")) +
   yaxis_title(size = 30, family = "sans")
 ```
 
+Below, we plot the a density estimate of $c_1$, together with the true value (solid line) and he value estimated using `lmer` (dashed line),
+```{r posterior hist2}
+size_text <- 20
+size_title <- 30
+i <- 1 # plot first coefficient
+mcmc_dens(posterior, pars = sprintf("c[%d]",i)) + 
+    vline_at(c(coeffs[i], coeffs_lmer[i]), size = c(1,0.75), linetype = c(1,2)) +
+    xaxis_text(size = size_text, family = "sans") + 
+    yaxis_text(size = size_text, family = "sans") +
+    xaxis_title(size = size_title, family = "sans") + 
+    yaxis_title(size = size_title, family = "sans") +
+    grid_lines(color = "gray60")
+```
+
+A different way to visualize the posterior for each parameter is to plot intervals, which can be done with `mcmc_intervals`.
+`mcmc_areas` plots density estimates of the posterior distribution of the parameters.
+
+
 ```{r posterior_intervals}
-mcmc_intervals(posterior, regex_pars = c("phi_SS", "tau", "phi_S2S")) +
+mcmc_intervals(posterior, regex_pars = c("phi_SS", "tau", "phi_S2S"),
+               prob = 0.5,
+               prob_outer = 0.9) +
   xaxis_text(size = 30, family = "sans") + 
   yaxis_text(size = 30, family = "sans") +
   grid_lines(color = "gray60")
@@ -236,4 +295,48 @@ mcmc_intervals(posterior, regex_pars = c("deltaS"),
   xaxis_text(size = 30, family = "sans") + 
   yaxis_text(size = 30, family = "sans") +
   grid_lines(color = "gray60")
+```
+
+Pairs plots show the correlation between different parameters, and can be done via `mcmc_scatter`, `mcmc_pairs` or `mcmc_hex`.
+Parameters to be plotted are selected via the `pars` or `regex_pars` argument, with the latter selecting parameters based on regular expressions.
+It is also possible to transform the variables, either indvidually, or all of them.
+
+```{r pairs plots}
+mcmc_pairs(posterior, pars = "tau", regex_pars = "c\\[[1,4]\\]",
+           off_diag_args = list(size = 1, alpha = 0.5))
+
+mcmc_hex(posterior, pars = c("tau", "phi_S2S"), transform = list(tau = "log"))
+
+mcmc_scatter(posterior, pars = c("phi_SS", "phi_S2S"), transform = "log")
+```
+
+One can also extract variables from the posterior distribution (in draws format), and get summaries.
+For example below we extract summaries of the event terms, and plot the event terms (and their uncertainty) against magnitude.
+We also plot them agaianst the true (simulated) values, to see that they are well estimated.
+
+```{r deltaB}
+deltaB <- as.data.frame(summarise_draws(subset(posterior, variable = "^deltaB\\[[0-9]+\\]", regex = TRUE)))
+df_plot <- data.frame(M = dataM[,1], deltaB = deltaB$mean, q05 = deltaB$q5, q95 = deltaB$q95, eta = dataM[,2])
+ggplot(df_plot, aes(x = M, y = deltaB)) + 
+  geom_point() +
+  ylim(-1.2,1.2) +
+  geom_pointrange(aes(ymin = q05, ymax = q95)) +
+  labs(title = "Event Terms") +
+  theme(
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    plot.title = element_text(size = 20)
+  )
+
+ggplot(df_plot, aes(x = eta, y = deltaB)) + 
+  geom_point() + geom_abline(intercept = 0, slope = 1, colour = "red") +
+  ylim(-1.2,1.2) +
+  geom_pointrange(aes(ymin = q05, ymax = q95)) +
+  labs(title = "Event Terms",
+       x = "deltaB_true", y = "detlaB_est") +
+  theme(
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    plot.title = element_text(size = 20)
+  )
 ```
